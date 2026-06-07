@@ -49,7 +49,7 @@ After receiving the server handshake command `0xc8`, the client sends:
 | `0xdd` | Client handshake/auth block | structured auth block | Contains username and JNLP `httpdata`; password field is blank in observed applet flow. |
 | `0xf7` | `InformBSEMode` | `u32le mode` | `0` none, `1` 3bpp BSE, `2` 8bpp BSE. |
 | `0xf3` | `InformHLevelCompression` | `u8 enabled` | Java UI calls this "Hardware Compression". On tested firmware it appears enabled by default. `1` selects HLC enhance frames; `0` selects raw enhance frames. |
-| `0xf6` | `InformForce8BPPMode` | `u8 enabled` | Java exposes a reduce-bandwidth/force-8bpp concept; behavior varies. |
+| `0xf6` | `InformForce8BPPMode` | `u8 enabled` | Java exposes a reduce-bandwidth/force-8bpp concept; observed to stop the stream on tested firmware. |
 | `0xd3` | `RequestPrimaryControl` | `u8 0` | Requests primary console control. |
 | `0xf2` | `Invalidate` | region list | Requests repaint. This project sends a large full-screen region on startup. |
 
@@ -118,7 +118,9 @@ Treat this as an encoder-path selector, not a generic hardware feature toggle. T
 
 Payload: `u8 enabled`.
 
-The Java applet has a force-8bpp/reduce-bandwidth setting, but live behavior was inconsistent during testing. In this viewer it remains experimental.
+The Java applet has a force-8bpp/reduce-bandwidth setting, but live behavior was inconsistent during testing. `0xf6 01` has been observed to stop the stream on tested firmware, including while BSE modes are active.
+
+Use `0xf7 01` for 3bpp BSE and `0xf7 02` for 8bpp BSE. Treat `0xf6` as an experimental applet compatibility flag, not the normal low-bandwidth selector.
 
 ### `0xf7` Inform BSE Mode
 

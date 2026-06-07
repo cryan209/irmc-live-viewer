@@ -282,8 +282,10 @@ function sendVideoSetting(name, value, options = {}) {
     send(command(0xf3, Buffer.from([value ? 1 : 0])));
     state.videoSettings.hardwareCompression = !!value;
   } else if (name === "force8bpp") {
+    if (!ALLOW_EXPERIMENTAL_FORCE8 && !options.allowExperimentalForce8) {
+      throw new Error("force-8bpp/reduce-bandwidth is experimental and can stop the stream; set IRMC_ALLOW_EXPERIMENTAL_FORCE8=1 or pass allowExperimentalForce8=true");
+    }
     if (state.videoSettings.force8bpp === !!value) return false;
-    // force8bpp works now that the stream stays alive
     send(command(0xf6, Buffer.from([value ? 1 : 0])));
     state.videoSettings.force8bpp = !!value;
   } else if (name === "bseMode") {
@@ -302,7 +304,7 @@ function sendVideoSetting(name, value, options = {}) {
 function sendVideoSettings(settings) {
   let changed = false;
   if (Object.prototype.hasOwnProperty.call(settings, "hardwareCompression")) changed = sendVideoSetting("hardwareCompression", !!settings.hardwareCompression, { allowRawEnhance: settings.allowRawEnhance === true }) || changed;
-  if (Object.prototype.hasOwnProperty.call(settings, "force8bpp")) changed = sendVideoSetting("force8bpp", !!settings.force8bpp, settings) || changed;
+  if (Object.prototype.hasOwnProperty.call(settings, "force8bpp")) changed = sendVideoSetting("force8bpp", !!settings.force8bpp, { allowExperimentalForce8: settings.allowExperimentalForce8 === true }) || changed;
   if (Object.prototype.hasOwnProperty.call(settings, "bseMode")) changed = sendVideoSetting("bseMode", settings.bseMode, settings) || changed;
   if (changed) invalidateRegion(0, 0, state.width || 2048, state.height || 2048); // request one fresh repaint after a settings batch
   return changed;
@@ -1669,7 +1671,7 @@ function pageHtml() {
     </div>
     <div class="line">
       <label title="On means HLC compressed enhance frames. Off means raw enhance frames and can use much more bandwidth."><input id="hardwareCompression" type="checkbox"> HLC compression</label>
-      <label><input id="force8bpp" type="checkbox"> Reduce Bandwidth (8→3bpp)</label>
+      <label title="Experimental applet mode; observed to stop the stream on tested firmware. Prefer BSE 3 bpp or 8 bpp."><input id="force8bpp" type="checkbox"> Force 8bpp (experimental)</label>
     </div>
     <div class="line">
       <label>Low Bandwidth
@@ -1704,6 +1706,7 @@ function pageHtml() {
     let browserDrawMs = 0;
     const dirtyVideoSettings = new Set();
     const allowRawEnhanceByDefault = ${ALLOW_RAW_ENHANCE_BY_DEFAULT ? "true" : "false"};
+    const allowExperimentalForce8 = ${ALLOW_EXPERIMENTAL_FORCE8 ? "true" : "false"};
     const HID = {
       a:4,b:5,c:6,d:7,e:8,f:9,g:10,h:11,i:12,j:13,k:14,l:15,m:16,n:17,o:18,p:19,q:20,r:21,s:22,t:23,u:24,v:25,w:26,x:27,y:28,z:29,
       "1":30,"2":31,"3":32,"4":33,"5":34,"6":35,"7":36,"8":37,"9":38,"0":39,
@@ -1756,6 +1759,11 @@ function pageHtml() {
         const ok = confirm("Switch to raw enhance frames? This can greatly increase bandwidth and may make the BMC sluggish.");
         if (!ok) return;
         patch.allowRawEnhance = true;
+      }
+      if (Object.prototype.hasOwnProperty.call(patch, "force8bpp") && !allowExperimentalForce8) {
+        const ok = confirm("Force 8bpp/reduce-bandwidth has stopped the stream on tested firmware. Send f6 anyway?");
+        if (!ok) return;
+        patch.allowExperimentalForce8 = true;
       }
       await fetch("/video-settings", {
         method: "POST",
@@ -1924,6 +1932,7 @@ function pageHtml() {
         if (!dirtyVideoSettings.has("force8bpp")) document.getElementById("force8bpp").checked = !!s.videoSettings.force8bpp;
         if (!dirtyVideoSettings.has("bseMode")) document.getElementById("bseMode").value = String(s.videoSettings.bseMode || 0);
       }
+      document.getElementById("force8bpp").title = allowExperimentalForce8 ? "Experimental; use carefully." : "Experimental and observed to stop the stream. A confirmation is required before sending f6.";
       const power = document.getElementById("power");
       if (s.powerControlEnabled === false) power.textContent = "Power: unavailable";
       else if (s.powerOn === true) power.textContent = "Power: on";

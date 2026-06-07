@@ -78,8 +78,8 @@ Environment variables:
 - `IRMC_DEBUG_PACKET_SECRETS`: set to `1` to include the client handshake packet. By default it is redacted because it can contain session material.
 - `IRMC_HARDWARE_COMPRESSION`: set startup HLC compression flag to `1` or `0`. On tested iRMC S3 firmware this appears enabled by default; `0` switches the stream to raw enhance frames and greatly increases bandwidth.
 - `IRMC_ALLOW_RAW_ENHANCE_BY_DEFAULT`: set to `1` to allow raw enhance / HLC-off (`0xf3 00`) without the browser confirmation path.
-- `IRMC_FORCE_8BPP`: set startup force-8bpp flag when experimental force-8bpp is enabled.
-- `IRMC_ALLOW_EXPERIMENTAL_FORCE8`: set to `1` to allow force-8bpp.
+- `IRMC_FORCE_8BPP`: set startup force-8bpp flag when experimental force-8bpp is enabled. This mode has been observed to stop the stream on tested firmware.
+- `IRMC_ALLOW_EXPERIMENTAL_FORCE8`: set to `1` to allow startup force-8bpp. The browser UI still requires confirmation before sending `0xf6`.
 - `IRMC_ALLOW_EXPERIMENTAL_BSE`: set to `0` to disable BSE low-bandwidth modes.
 - `IRMC_BSE_MODE`: startup BSE mode, `0`, `1`, or `2`.
 
