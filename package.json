@@ -5,6 +5,7 @@
   "main": "server.js",
   "bin": {
     "irmc-live-viewer": "./irmc-live-viewer",
+    "irmc_live_viewer": "./irmc_live_viewer",
     "irmc-decode-mahogany": "./irmc-decode-mahogany.js",
     "irmc-extract-pcap-streams": "./irmc-extract-pcap-streams.js"
   },

@@ -28,10 +28,18 @@ No browser plugin or Java runtime is required for the HTML viewer.
 Run with a fresh iRMC session fetched from the web UI:
 
 ```sh
-IRMC_HOST=<irmc-ip> IRMC_USER=admin ./irmc-live-viewer
+./irmc-live-viewer
 ```
 
-The wrapper prompts for `IRMC_PASS`, starts the local viewer, and serves it at:
+The wrapper asks for the iRMC host, web port, username, password, and local viewer port. It can save the non-secret defaults to `~/.config/irmc-live-viewer/config.env` for next time; the password is never saved by the wrapper.
+
+The underscore alias also works:
+
+```sh
+./irmc_live_viewer
+```
+
+The wrapper starts the local viewer and serves it at:
 
 ```text
 http://127.0.0.1:8090/
@@ -57,6 +65,7 @@ Environment variables:
 - `IRMC_USER`: iRMC username. Defaults to `admin`.
 - `IRMC_PASS`: iRMC password. If omitted, the wrapper prompts when `IRMC_HOST` is set.
 - `IRMC_SCHEME`: `http` or `https`. Defaults to `http`.
+- `IRMC_PORT`: iRMC web port used when fetching a fresh JNLP. Defaults to no explicit port when running `server.js` directly; the wrapper prompts with `80` or `443`.
 - `IRMC_VIEWER_PORT`: local viewer port. Defaults to `8090`.
 - `IRMC_JNLP`: explicit JNLP path.
 - `IRMC_RENDER_EVERY`: render every N decoded frames. Defaults to `1`.

@@ -2,22 +2,158 @@
 set -euo pipefail
 
 script_dir="${0:A:h}"
-host="${1:-${IRMC_HOST:-}}"
+config_dir="${XDG_CONFIG_HOME:-$HOME/.config}/irmc-live-viewer"
+config_file="$config_dir/config.env"
+arg_host="${1:-}"
+env_host="${IRMC_HOST:-}"
+
+if [[ -f "$config_file" ]]; then
+  source "$config_file"
+fi
+
+host="${arg_host:-${IRMC_HOST:-}}"
+scheme="${IRMC_SCHEME:-http}"
+irmc_port="${IRMC_PORT:-}"
 user="${IRMC_USER:-admin}"
-port="${IRMC_VIEWER_PORT:-8090}"
+viewer_port="${IRMC_VIEWER_PORT:-8090}"
+prompt_connection=0
+
+if [[ -t 0 && -z "$arg_host" && -z "$env_host" && -z "${IRMC_JNLP:-}" ]]; then
+  prompt_connection=1
+fi
+
+prompt_default() {
+  local label="$1"
+  local default="$2"
+  local value
+
+  if [[ -n "$default" ]]; then
+    print -n "$label [$default]: " >&2
+  else
+    print -n "$label: " >&2
+  fi
+
+  read -r value
+  if [[ -n "$value" ]]; then
+    print -r -- "$value"
+  else
+    print -r -- "$default"
+  fi
+}
+
+prompt_secret() {
+  local label="$1"
+  local value
+
+  print -n "$label: " >&2
+  if [[ -t 0 ]]; then
+    stty -echo
+  fi
+  read -r value
+  if [[ -t 0 ]]; then
+    stty echo
+  fi
+  print >&2
+  print -r -- "$value"
+}
+
+yes_no() {
+  local label="$1"
+  local default="${2:-n}"
+  local suffix answer
+
+  if [[ "$default" == "y" ]]; then
+    suffix="Y/n"
+  else
+    suffix="y/N"
+  fi
+
+  print -n "$label [$suffix]: " >&2
+  read -r answer
+  answer="${answer:l}"
+  [[ -z "$answer" ]] && answer="$default"
+  [[ "$answer" == "y" || "$answer" == "yes" ]]
+}
+
+quote_env() {
+  local value="$1"
+  print -r -- "${(qq)value}"
+}
+
+save_config() {
+  mkdir -p "$config_dir"
+  {
+    print -r -- "# iRMC Live Viewer defaults"
+    print -r -- "# Passwords are intentionally not saved here."
+    print -r -- "IRMC_HOST=$(quote_env "$host")"
+    print -r -- "IRMC_SCHEME=$(quote_env "$scheme")"
+    print -r -- "IRMC_PORT=$(quote_env "$irmc_port")"
+    print -r -- "IRMC_USER=$(quote_env "$user")"
+    print -r -- "IRMC_VIEWER_PORT=$(quote_env "$viewer_port")"
+  } > "$config_file"
+  chmod 600 "$config_file"
+  print "Saved defaults to $config_file" >&2
+}
+
+split_host_port() {
+  local maybe_host="${host%:*}"
+  local maybe_port="${host##*:}"
+
+  if [[ -z "$irmc_port" && "$host" == *:* && "$host" != \[*\] && "$maybe_port" =~ '^[0-9]+$' ]]; then
+    host="$maybe_host"
+    irmc_port="$maybe_port"
+  fi
+}
+
+if [[ "$prompt_connection" == "1" ]]; then
+  print "iRMC Live Viewer setup" >&2
+  print "Press Enter to accept the value in brackets." >&2
+fi
+
+if [[ "$prompt_connection" == "1" && -z "$host" ]]; then
+  while [[ -z "$host" ]]; do
+    host="$(prompt_default "iRMC host/IP" "$host")"
+  done
+fi
+
+split_host_port
+
+if [[ "$prompt_connection" == "1" && -n "$host" ]]; then
+  scheme="$(prompt_default "iRMC scheme" "$scheme")"
+  if [[ -z "$irmc_port" ]]; then
+    if [[ "$scheme" == "https" ]]; then
+      irmc_port="443"
+    else
+      irmc_port="80"
+    fi
+  fi
+  irmc_port="$(prompt_default "iRMC web port" "$irmc_port")"
+  user="$(prompt_default "iRMC username" "$user")"
+  viewer_port="$(prompt_default "Local viewer port" "$viewer_port")"
+fi
 
 if [[ -n "$host" ]]; then
   export IRMC_HOST="$host"
+  export IRMC_SCHEME="$scheme"
+  export IRMC_PORT="$irmc_port"
+  export IRMC_USER="$user"
+  export IRMC_VIEWER_PORT="$viewer_port"
 fi
 
 if [[ -n "$host" && -z "${IRMC_PASS:-}" ]]; then
-  print -n "iRMC password for $user@$host: " >&2
-  stty -echo
-  read -r IRMC_PASS
-  stty echo
-  print >&2
+  IRMC_PASS="$(prompt_secret "iRMC password for $user@$host")"
   export IRMC_PASS
 fi
 
-echo "Starting live iRMC viewer on http://127.0.0.1:$port" >&2
+if [[ "$prompt_connection" == "1" && -n "$host" && ! -f "$config_file" ]]; then
+  if yes_no "Save these defaults for next time (password is not saved)" "y"; then
+    save_config
+  fi
+elif [[ "$prompt_connection" == "1" && -n "$host" ]]; then
+  if yes_no "Update saved defaults for next time (password is not saved)" "n"; then
+    save_config
+  fi
+fi
+
+echo "Starting live iRMC viewer on http://127.0.0.1:$viewer_port" >&2
 exec node "$script_dir/server.js"

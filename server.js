@@ -13,6 +13,7 @@ const HOST = process.env.IRMC_HOST || "";
 const USER = process.env.IRMC_USER || "admin";
 const PASS = process.env.IRMC_PASS || "";
 const SCHEME = process.env.IRMC_SCHEME || "http";
+const IRMC_PORT = process.env.IRMC_PORT || "";
 const PORT = Number(process.env.IRMC_VIEWER_PORT || 8090);
 const LANG = process.env.IRMC_LANG || "0";
 const MS = process.env.IRMC_MS || "0";
@@ -393,7 +394,8 @@ function fetchFreshJnlp() {
   fs.mkdirSync(dir, { recursive: true });
   const home = path.join(dir, "home.html");
   const jnlp = path.join(dir, "avr.jnlp");
-  const base = `${SCHEME}://${HOST}`;
+  const hostPort = IRMC_PORT ? `${HOST}:${IRMC_PORT}` : HOST;
+  const base = `${SCHEME}://${hostPort}`;
 
   curl([`${base}/`], home);
   let html = fs.readFileSync(home, "utf8");
