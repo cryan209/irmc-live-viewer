@@ -76,6 +76,7 @@ Environment variables:
 - `IRMC_DEBUG_PACKET_FILE`: optional file path to append packet debug logs.
 - `IRMC_DEBUG_PACKET_SECRETS`: set to `1` to include the client handshake packet. By default it is redacted because it can contain session material.
 - `IRMC_HARDWARE_COMPRESSION`: set startup hardware-compression flag to `1` or `0`. On tested iRMC S3 firmware this appears enabled by default; toggling it off after it has been on may increase bandwidth demand.
+- `IRMC_ALLOW_UNSAFE_HARDWARE_COMPRESSION_OFF`: set to `1` to allow sending hardware-compression-off (`0xf3 00`). By default this is blocked because it can destabilize tested firmware.
 - `IRMC_FORCE_8BPP`: set startup force-8bpp flag when experimental force-8bpp is enabled.
 - `IRMC_ALLOW_EXPERIMENTAL_FORCE8`: set to `1` to allow force-8bpp.
 - `IRMC_ALLOW_EXPERIMENTAL_BSE`: set to `0` to disable BSE low-bandwidth modes.

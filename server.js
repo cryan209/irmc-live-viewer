@@ -23,6 +23,7 @@ const START_FORCE_8BPP = ALLOW_EXPERIMENTAL_FORCE8 && process.env.IRMC_FORCE_8BP
 const START_HARDWARE_COMPRESSION = process.env.IRMC_HARDWARE_COMPRESSION === "1" ? true : process.env.IRMC_HARDWARE_COMPRESSION === "0" ? false : null;
 const ALLOW_EXPERIMENTAL_BSE = process.env.IRMC_ALLOW_EXPERIMENTAL_BSE !== "0";
 const START_BSE_MODE = ALLOW_EXPERIMENTAL_BSE ? Math.max(0, Math.min(2, Number(process.env.IRMC_BSE_MODE || 0))) : 0;
+const ALLOW_UNSAFE_HARDWARE_COMPRESSION_OFF = process.env.IRMC_ALLOW_UNSAFE_HARDWARE_COMPRESSION_OFF === "1";
 const DEBUG_PACKETS = process.env.IRMC_DEBUG_PACKETS === "1";
 const DEBUG_RAW_PACKETS = process.env.IRMC_DEBUG_RAW === "1";
 const DEBUG_PACKET_SECRETS = process.env.IRMC_DEBUG_PACKET_SECRETS === "1";
@@ -99,7 +100,7 @@ let state = {
   },
   updateRects: [],
   videoSettings: {
-    hardwareCompression: START_HARDWARE_COMPRESSION,
+    hardwareCompression: START_HARDWARE_COMPRESSION ?? true,
     force8bpp: START_FORCE_8BPP,
     bseMode: START_BSE_MODE,
     unsupportedBseFrames: 0,
@@ -227,7 +228,15 @@ function invalidateRegion(left, top, right, bottom) {
 function sendStartupMessages(args) {
   send(buildClientHandshake(args));
   send(command(0xf7, le32(START_BSE_MODE))); // InformBSEMode: none/3bpp/8bpp
-  if (START_HARDWARE_COMPRESSION !== null) send(command(0xf3, Buffer.from([START_HARDWARE_COMPRESSION ? 1 : 0])));
+  if (START_HARDWARE_COMPRESSION !== null) {
+    if (START_HARDWARE_COMPRESSION || ALLOW_UNSAFE_HARDWARE_COMPRESSION_OFF) {
+      send(command(0xf3, Buffer.from([START_HARDWARE_COMPRESSION ? 1 : 0])));
+      state.videoSettings.hardwareCompression = START_HARDWARE_COMPRESSION;
+    } else {
+      setStatus("video-setting", "ignored unsafe startup hardware compression off");
+      state.videoSettings.hardwareCompression = true;
+    }
+  }
   if (START_FORCE_8BPP) send(command(0xf6, Buffer.from([1])));
   send(command(0xd3, Buffer.from([0]))); // RequestPrimaryControl
   // NOTE: do NOT send 0xf1 (RequestVesaMode) — Java client doesn't send it and it causes a spurious double VideoMode reset
@@ -256,22 +265,38 @@ function sendKeyCombo(hids) {
 
 function sendVideoSetting(name, value) {
   if (name === "hardwareCompression") {
+    if (!value && !ALLOW_UNSAFE_HARDWARE_COMPRESSION_OFF) {
+      state.videoSettings.hardwareCompression = true;
+      throw new Error("refusing to send hardware compression off; set IRMC_ALLOW_UNSAFE_HARDWARE_COMPRESSION_OFF=1 to allow f3 00");
+    }
+    if (state.videoSettings.hardwareCompression === !!value) return false;
     send(command(0xf3, Buffer.from([value ? 1 : 0])));
     state.videoSettings.hardwareCompression = !!value;
   } else if (name === "force8bpp") {
+    if (state.videoSettings.force8bpp === !!value) return false;
     // force8bpp works now that the stream stays alive
     send(command(0xf6, Buffer.from([value ? 1 : 0])));
     state.videoSettings.force8bpp = !!value;
   } else if (name === "bseMode") {
     const mode = Math.max(0, Math.min(2, Number(value) || 0));
     if (mode && !ALLOW_EXPERIMENTAL_BSE) throw new Error("BSE low-bandwidth modes are disabled by IRMC_ALLOW_EXPERIMENTAL_BSE=0");
+    if (state.videoSettings.bseMode === mode) return false;
     send(command(0xf7, le32(mode)));
     state.videoSettings.bseMode = mode;
   } else {
     throw new Error(`unknown video setting: ${name}`);
   }
-  invalidateRegion(0, 0, state.width || 2048, state.height || 2048); // request fresh repaint
   state.videoSettings.updatedAt = new Date().toISOString();
+  return true;
+}
+
+function sendVideoSettings(settings) {
+  let changed = false;
+  if (Object.prototype.hasOwnProperty.call(settings, "hardwareCompression")) changed = sendVideoSetting("hardwareCompression", !!settings.hardwareCompression) || changed;
+  if (Object.prototype.hasOwnProperty.call(settings, "force8bpp")) changed = sendVideoSetting("force8bpp", !!settings.force8bpp) || changed;
+  if (Object.prototype.hasOwnProperty.call(settings, "bseMode")) changed = sendVideoSetting("bseMode", settings.bseMode) || changed;
+  if (changed) invalidateRegion(0, 0, state.width || 2048, state.height || 2048); // request one fresh repaint after a settings batch
+  return changed;
 }
 
 function cloneCommands() {
@@ -1592,7 +1617,7 @@ function pageHtml() {
       <span id="replayPos">live</span>
     </div>
     <div class="line">
-      <label><input id="hardwareCompression" type="checkbox"> Hardware Compression</label>
+      <label title="Usually enabled by default on iRMC S3; turning it off may destabilize some BMC firmware."><input id="hardwareCompression" type="checkbox"> Hardware Compression</label>
       <label><input id="force8bpp" type="checkbox"> Reduce Bandwidth (8→3bpp)</label>
     </div>
     <div class="line">
@@ -1627,6 +1652,7 @@ function pageHtml() {
     let browserImageMs = 0;
     let browserDrawMs = 0;
     let videoSettingsDirty = false;
+    const allowUnsafeHardwareCompressionOff = ${ALLOW_UNSAFE_HARDWARE_COMPRESSION_OFF ? "true" : "false"};
     const HID = {
       a:4,b:5,c:6,d:7,e:8,f:9,g:10,h:11,i:12,j:13,k:14,l:15,m:16,n:17,o:18,p:19,q:20,r:21,s:22,t:23,u:24,v:25,w:26,x:27,y:28,z:29,
       "1":30,"2":31,"3":32,"4":33,"5":34,"6":35,"7":36,"8":37,"9":38,"0":39,
@@ -1661,20 +1687,36 @@ function pageHtml() {
       await fetch("/power", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action }) });
     }
     async function applyVideoSettings() {
-      const bseMode = Number(document.getElementById("bseMode").value);
+      const next = {
+        hardwareCompression: document.getElementById("hardwareCompression").checked,
+        force8bpp: document.getElementById("force8bpp").checked,
+        bseMode: Number(document.getElementById("bseMode").value),
+      };
+      const current = (latestState && latestState.videoSettings) || {};
+      const patch = {};
+      if (typeof current.hardwareCompression !== "boolean" || current.hardwareCompression !== next.hardwareCompression) patch.hardwareCompression = next.hardwareCompression;
+      if (!!current.force8bpp !== next.force8bpp) patch.force8bpp = next.force8bpp;
+      if (Number(current.bseMode || 0) !== next.bseMode) patch.bseMode = next.bseMode;
+      if (!Object.keys(patch).length) {
+        videoSettingsDirty = false;
+        document.getElementById("probeResult").textContent = "settings: no changes";
+        return;
+      }
       await fetch("/video-settings", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          hardwareCompression: document.getElementById("hardwareCompression").checked,
-          force8bpp: document.getElementById("force8bpp").checked,
-          bseMode,
-        })
+        body: JSON.stringify(patch)
+      }).then(r => r.json()).then(result => {
+        document.getElementById("probeResult").textContent = result.ok ? ("settings: applied " + Object.keys(patch).join(", ")) : ("settings error: " + result.error);
+        if (result.ok) videoSettingsDirty = false;
       });
-      videoSettingsDirty = false;
     }
     async function probeHardwareCompression() {
       const target = !document.getElementById("hardwareCompression").checked;
+      if (!target && !allowUnsafeHardwareCompressionOff) {
+        document.getElementById("probeResult").textContent = "probe: hardware compression off is blocked by default";
+        return;
+      }
       document.getElementById("probeResult").textContent = "probe: temporarily testing hardware compression -> " + target;
       const result = await fetch("/video-probe", {
         method: "POST",
@@ -1962,11 +2004,9 @@ const server = http.createServer(async (req, res) => {
   } else if (req.url.startsWith("/video-settings") && req.method === "POST") {
     try {
       const body = await readJsonBody(req);
-      if (Object.prototype.hasOwnProperty.call(body, "hardwareCompression")) sendVideoSetting("hardwareCompression", !!body.hardwareCompression);
-      if (Object.prototype.hasOwnProperty.call(body, "force8bpp")) sendVideoSetting("force8bpp", !!body.force8bpp);
-      if (Object.prototype.hasOwnProperty.call(body, "bseMode")) sendVideoSetting("bseMode", body.bseMode);
+      const changed = sendVideoSettings(body);
       res.writeHead(202, { "content-type": "application/json" });
-      res.end(JSON.stringify({ ok: true, videoSettings: state.videoSettings }));
+      res.end(JSON.stringify({ ok: true, changed, videoSettings: state.videoSettings }));
     } catch (err) {
       res.writeHead(400, { "content-type": "application/json" });
       res.end(JSON.stringify({ ok: false, error: err.message }));
@@ -1976,12 +2016,12 @@ const server = http.createServer(async (req, res) => {
       const body = await readJsonBody(req);
       if (typeof body.name !== "string") throw new Error("expected probe setting name");
       const before = snapshotVideoState();
-      sendVideoSetting(body.name, body.value);
+      sendVideoSettings({ [body.name]: body.value });
       await sleep(Math.max(1000, Math.min(10000, Number(body.settleMs || 4500))));
       const after = snapshotVideoState();
       const probe = summarizeProbe(body.name, body.value, before, after);
       if (body.restore !== false && Object.prototype.hasOwnProperty.call(before.videoSettings || {}, body.name)) {
-        sendVideoSetting(body.name, before.videoSettings[body.name]);
+        sendVideoSettings({ [body.name]: before.videoSettings[body.name] });
         probe.restored = true;
       }
       state.videoSettings.probes = [probe, ...(state.videoSettings.probes || [])].slice(0, 8);
