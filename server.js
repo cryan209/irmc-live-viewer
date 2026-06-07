@@ -23,7 +23,7 @@ const START_FORCE_8BPP = ALLOW_EXPERIMENTAL_FORCE8 && process.env.IRMC_FORCE_8BP
 const START_HARDWARE_COMPRESSION = process.env.IRMC_HARDWARE_COMPRESSION === "1" ? true : process.env.IRMC_HARDWARE_COMPRESSION === "0" ? false : null;
 const ALLOW_EXPERIMENTAL_BSE = process.env.IRMC_ALLOW_EXPERIMENTAL_BSE !== "0";
 const START_BSE_MODE = ALLOW_EXPERIMENTAL_BSE ? Math.max(0, Math.min(2, Number(process.env.IRMC_BSE_MODE || 0))) : 0;
-const ALLOW_UNSAFE_HARDWARE_COMPRESSION_OFF = process.env.IRMC_ALLOW_UNSAFE_HARDWARE_COMPRESSION_OFF === "1";
+const ALLOW_RAW_ENHANCE_BY_DEFAULT = process.env.IRMC_ALLOW_RAW_ENHANCE_BY_DEFAULT === "1";
 const DEBUG_PACKETS = process.env.IRMC_DEBUG_PACKETS === "1";
 const DEBUG_RAW_PACKETS = process.env.IRMC_DEBUG_RAW === "1";
 const DEBUG_PACKET_SECRETS = process.env.IRMC_DEBUG_PACKET_SECRETS === "1";
@@ -239,11 +239,11 @@ function sendStartupMessages(args) {
   send(buildClientHandshake(args));
   send(command(0xf7, le32(START_BSE_MODE))); // InformBSEMode: none/3bpp/8bpp
   if (START_HARDWARE_COMPRESSION !== null) {
-    if (START_HARDWARE_COMPRESSION || ALLOW_UNSAFE_HARDWARE_COMPRESSION_OFF) {
+    if (START_HARDWARE_COMPRESSION || ALLOW_RAW_ENHANCE_BY_DEFAULT) {
       send(command(0xf3, Buffer.from([START_HARDWARE_COMPRESSION ? 1 : 0])));
       state.videoSettings.hardwareCompression = START_HARDWARE_COMPRESSION;
     } else {
-      setStatus("video-setting", "ignored unsafe startup hardware compression off");
+      setStatus("video-setting", "ignored startup raw enhance request; set IRMC_ALLOW_RAW_ENHANCE_BY_DEFAULT=1 to allow");
       state.videoSettings.hardwareCompression = null;
     }
   }
@@ -273,10 +273,10 @@ function sendKeyCombo(hids) {
   for (const hid of unique.slice().reverse()) sendKeyState(hid, false);
 }
 
-function sendVideoSetting(name, value) {
+function sendVideoSetting(name, value, options = {}) {
   if (name === "hardwareCompression") {
-    if (!value && !ALLOW_UNSAFE_HARDWARE_COMPRESSION_OFF) {
-      throw new Error("refusing to send hardware compression off; set IRMC_ALLOW_UNSAFE_HARDWARE_COMPRESSION_OFF=1 to allow f3 00");
+    if (!value && !ALLOW_RAW_ENHANCE_BY_DEFAULT && !options.allowRawEnhance) {
+      throw new Error("refusing to switch to raw enhance; pass allowRawEnhance=true to allow f3 00");
     }
     if (state.videoSettings.hardwareCompression === !!value) return false;
     send(command(0xf3, Buffer.from([value ? 1 : 0])));
@@ -301,9 +301,9 @@ function sendVideoSetting(name, value) {
 
 function sendVideoSettings(settings) {
   let changed = false;
-  if (Object.prototype.hasOwnProperty.call(settings, "hardwareCompression")) changed = sendVideoSetting("hardwareCompression", !!settings.hardwareCompression) || changed;
-  if (Object.prototype.hasOwnProperty.call(settings, "force8bpp")) changed = sendVideoSetting("force8bpp", !!settings.force8bpp) || changed;
-  if (Object.prototype.hasOwnProperty.call(settings, "bseMode")) changed = sendVideoSetting("bseMode", settings.bseMode) || changed;
+  if (Object.prototype.hasOwnProperty.call(settings, "hardwareCompression")) changed = sendVideoSetting("hardwareCompression", !!settings.hardwareCompression, { allowRawEnhance: settings.allowRawEnhance === true }) || changed;
+  if (Object.prototype.hasOwnProperty.call(settings, "force8bpp")) changed = sendVideoSetting("force8bpp", !!settings.force8bpp, settings) || changed;
+  if (Object.prototype.hasOwnProperty.call(settings, "bseMode")) changed = sendVideoSetting("bseMode", settings.bseMode, settings) || changed;
   if (changed) invalidateRegion(0, 0, state.width || 2048, state.height || 2048); // request one fresh repaint after a settings batch
   return changed;
 }
@@ -1668,7 +1668,7 @@ function pageHtml() {
       <span id="replayPos">live</span>
     </div>
     <div class="line">
-      <label title="Usually enabled by default on iRMC S3; turning it off may destabilize some BMC firmware."><input id="hardwareCompression" type="checkbox"> Hardware Compression</label>
+      <label title="On means HLC compressed enhance frames. Off means raw enhance frames and can use much more bandwidth."><input id="hardwareCompression" type="checkbox"> HLC compression</label>
       <label><input id="force8bpp" type="checkbox"> Reduce Bandwidth (8→3bpp)</label>
     </div>
     <div class="line">
@@ -1703,7 +1703,7 @@ function pageHtml() {
     let browserImageMs = 0;
     let browserDrawMs = 0;
     const dirtyVideoSettings = new Set();
-    const allowUnsafeHardwareCompressionOff = ${ALLOW_UNSAFE_HARDWARE_COMPRESSION_OFF ? "true" : "false"};
+    const allowRawEnhanceByDefault = ${ALLOW_RAW_ENHANCE_BY_DEFAULT ? "true" : "false"};
     const HID = {
       a:4,b:5,c:6,d:7,e:8,f:9,g:10,h:11,i:12,j:13,k:14,l:15,m:16,n:17,o:18,p:19,q:20,r:21,s:22,t:23,u:24,v:25,w:26,x:27,y:28,z:29,
       "1":30,"2":31,"3":32,"4":33,"5":34,"6":35,"7":36,"8":37,"9":38,"0":39,
@@ -1752,6 +1752,11 @@ function pageHtml() {
         document.getElementById("probeResult").textContent = "settings: no changes";
         return;
       }
+      if (patch.hardwareCompression === false && !allowRawEnhanceByDefault) {
+        const ok = confirm("Switch to raw enhance frames? This can greatly increase bandwidth and may make the BMC sluggish.");
+        if (!ok) return;
+        patch.allowRawEnhance = true;
+      }
       await fetch("/video-settings", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -1763,15 +1768,17 @@ function pageHtml() {
     }
     async function probeHardwareCompression() {
       const target = !document.getElementById("hardwareCompression").checked;
-      if (!target && !allowUnsafeHardwareCompressionOff) {
-        document.getElementById("probeResult").textContent = "probe: hardware compression off is blocked by default";
-        return;
+      const body = { name: "hardwareCompression", value: target, settleMs: 4500, restore: true };
+      if (!target && !allowRawEnhanceByDefault) {
+        const ok = confirm("Temporarily probe raw enhance frames? This can greatly increase bandwidth while the probe runs.");
+        if (!ok) return;
+        body.allowRawEnhance = true;
       }
-      document.getElementById("probeResult").textContent = "probe: temporarily testing hardware compression -> " + target;
+      document.getElementById("probeResult").textContent = "probe: temporarily testing HLC compression -> " + target;
       const result = await fetch("/video-probe", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ name: "hardwareCompression", value: target, settleMs: 4500, restore: true })
+        body: JSON.stringify(body)
       }).then(r => r.json());
       document.getElementById("probeResult").textContent = result.ok ? ("probe: " + result.probe.summary) : ("probe error: " + result.error);
       dirtyVideoSettings.clear();
@@ -2076,12 +2083,15 @@ const server = http.createServer(async (req, res) => {
       const body = await readJsonBody(req);
       if (typeof body.name !== "string") throw new Error("expected probe setting name");
       const before = snapshotVideoState();
-      sendVideoSettings({ [body.name]: body.value });
+      sendVideoSettings({ [body.name]: body.value, allowRawEnhance: body.allowRawEnhance === true });
       await sleep(Math.max(1000, Math.min(10000, Number(body.settleMs || 4500))));
       const after = snapshotVideoState();
       const probe = summarizeProbe(body.name, body.value, before, after);
       if (body.restore !== false && Object.prototype.hasOwnProperty.call(before.videoSettings || {}, body.name)) {
-        sendVideoSettings({ [body.name]: before.videoSettings[body.name] });
+        sendVideoSettings({
+          [body.name]: before.videoSettings[body.name],
+          allowRawEnhance: body.name === "hardwareCompression" && before.videoSettings[body.name] === false,
+        });
         probe.restored = true;
       }
       state.videoSettings.probes = [probe, ...(state.videoSettings.probes || [])].slice(0, 8);
