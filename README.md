@@ -2,13 +2,14 @@
 
 Experimental HTML5 live KVM viewer for Fujitsu iRMC S3 systems that use the old Java Mahogany AVR applet.
 
-This project reverse-engineers enough of the Mahogany stream to display the remote console in a browser, send keyboard events, issue selected power actions, and inspect/debug the video stream. It is not a complete replacement for the Java applet yet.
+This project reverse-engineers enough of the Mahogany stream to display the remote console in a browser, send keyboard/mouse events, issue selected power actions, and inspect/debug the video stream. It is not a complete replacement for the Java applet yet.
 
 ## Features
 
 - Browser-based live console at `http://127.0.0.1:8090`
 - JNLP/session parsing, with optional fresh JNLP fetch using iRMC HTTP digest auth
 - Keyboard toolbar and virtual keyboard
+- Absolute mouse movement, buttons, and wheel events
 - Power controls
 - Text mode rendering for BIOS/bootloader screens
 - Update rectangle overlay, stats, and replay recording

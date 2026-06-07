@@ -69,6 +69,27 @@ Payload:
 
 The viewer sends key combinations by sending key-down events in order, then key-up events in reverse order.
 
+### Mouse Input
+
+Mouse command IDs and payloads were confirmed from the Java applet classes:
+
+| Command | Java class | Payload | Notes |
+| --- | --- | --- | --- |
+| `0xb1` | `ClientAbsoluteMode` | `u8 enabled` | The viewer sends `1` before absolute mouse input. |
+| `0xb2` | `ClientRelativeMode` | `u8 flags` | Bit `0` is relative mode, bit `4` is hide mouse. The viewer sends `0` for absolute mode with no hide. |
+| `0xb3` | `ButtonStateAtAbsolute` | `i16le x`, `i16le y`, `u8 count`, button states | Absolute button/wheel state at framebuffer coordinates. |
+| `0xb4` | `ButtonStateAtRelative` | `i16le dx`, `i16le dy`, `u8 count`, button states | Relative button/wheel state; not used by the viewer yet. |
+| `0xb5` | `MouseMove` | `i16le x`, `i16le y` | Absolute or relative depending on active mouse mode. |
+
+The applet sends three button states in left, right, middle order. Each button state is one byte:
+
+```text
+0x80 = not pressed, wheel centered
+0x81 = pressed, wheel centered
+```
+
+For wheel events, the third button state uses `((64 + wheelRotation) << 1) | middlePressed`. Browser wheel deltas are currently normalized to `-1` or `1`.
+
 ### `0xd3` Request Primary Control
 
 Payload currently sent as one zero byte.

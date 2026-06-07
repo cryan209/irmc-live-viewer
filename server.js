@@ -36,6 +36,11 @@ const COMMAND_NAMES = {
   0x40: "OemLocalMonitorState",
   0x41: "PowerControl",
   0x89: "StorageStatus",
+  0xb1: "ClientAbsoluteMode",
+  0xb2: "ClientRelativeMode",
+  0xb3: "ButtonStateAtAbsolute",
+  0xb4: "ButtonStateAtRelative",
+  0xb5: "MouseMove",
   0xc5: "MultiUserState",
   0xc6: "ServerDisconnect",
   0xc7: "OemCurrentLocalMonitorState",
@@ -181,6 +186,12 @@ function le16(n) {
   return b;
 }
 
+function i16(n) {
+  const b = Buffer.alloc(2);
+  b.writeInt16LE(Math.max(-32768, Math.min(32767, Number(n) || 0)), 0);
+  return b;
+}
+
 function le32(n) {
   const b = Buffer.alloc(4);
   b.writeUInt32LE(n >>> 0, 0);
@@ -271,6 +282,52 @@ function sendKeyCombo(hids) {
   const unique = [...new Set(hids.map(Number).filter((n) => Number.isInteger(n) && n > 0 && n < 0x10000))];
   for (const hid of unique) sendKeyState(hid, true);
   for (const hid of unique.slice().reverse()) sendKeyState(hid, false);
+}
+
+function clampMouseCoord(n, max) {
+  return Math.max(0, Math.min(Math.max(0, max - 1), Math.round(Number(n) || 0)));
+}
+
+function mouseButtonStates(buttons = 0, wheel = 0) {
+  const left = (buttons & 1) !== 0;
+  const right = (buttons & 2) !== 0;
+  const middle = (buttons & 4) !== 0;
+  const wheelPos = Math.max(0, Math.min(127, 64 + Math.max(-63, Math.min(63, Math.round(Number(wheel) || 0)))));
+  return [
+    0x80 | (left ? 1 : 0),
+    0x80 | (right ? 1 : 0),
+    ((wheelPos << 1) & 0xfe) | (middle ? 1 : 0),
+  ];
+}
+
+function sendMouseAbsoluteMode() {
+  if (state.mouseAbsoluteModeSent) return;
+  send(command(0xb1, Buffer.from([1]))); // ClientAbsoluteMode(true)
+  send(command(0xb2, Buffer.from([0]))); // ClientRelativeMode(false, hide=false)
+  state.mouseAbsoluteModeSent = true;
+}
+
+function sendMouseMove(x, y) {
+  if (!state.width || !state.height) return;
+  sendMouseAbsoluteMode();
+  const mx = clampMouseCoord(x, state.width);
+  const my = clampMouseCoord(y, state.height);
+  send(command(0xb5, Buffer.concat([i16(mx), i16(my)])));
+  state.mouseEvents = (state.mouseEvents || 0) + 1;
+  state.mouseX = mx;
+  state.mouseY = my;
+}
+
+function sendMouseButtonState(x, y, buttons, wheel = 0) {
+  if (!state.width || !state.height) return;
+  sendMouseAbsoluteMode();
+  const mx = clampMouseCoord(x, state.width);
+  const my = clampMouseCoord(y, state.height);
+  send(command(0xb3, Buffer.concat([i16(mx), i16(my), Buffer.from([3, ...mouseButtonStates(buttons, wheel)])])));
+  state.mouseEvents = (state.mouseEvents || 0) + 1;
+  state.mouseX = mx;
+  state.mouseY = my;
+  state.mouseButtons = buttons & 7;
 }
 
 function sendVideoSetting(name, value, options = {}) {
@@ -1494,6 +1551,7 @@ function connectIrmc(args) {
   latestPng = null;
   latestPngRev = 0;
   handshakeSent = false;
+  state.mouseAbsoluteModeSent = false;
   state.commands = {};
   state.frames = 0;
   state.bytesIn = 0;
@@ -1586,7 +1644,7 @@ function pageHtml() {
     .group { display: flex; gap: 4px; padding-right: 6px; border-right: 1px solid #383f47; }
     .group:last-child { border-right: 0; }
     main { min-height: 0; display: grid; place-items: center; overflow: hidden; background: #050505; }
-    canvas { max-width: 100%; max-height: 100%; image-rendering: auto; background: #000; }
+    canvas { max-width: 100%; max-height: 100%; image-rendering: auto; background: #000; cursor: crosshair; touch-action: none; }
     #debug { display: none; position: fixed; right: 10px; top: 58px; z-index: 10; width: min(360px, calc(100vw - 20px)); background: #1a1d21; border: 1px solid #3b424b; border-radius: 8px; box-shadow: 0 12px 32px rgba(0,0,0,.45); padding: 9px; }
     #debug.open { display: grid; gap: 8px; }
     #debug .line { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
@@ -1618,6 +1676,7 @@ function pageHtml() {
     <span id="size" class="pill">no video</span>
     <span id="frames" class="pill">0 frames</span>
     <span id="keys" class="pill">0 keys</span>
+    <span id="mouse" class="pill">0 mouse</span>
     <span id="power" class="pill">Power: unknown</span>
     <button id="toggleDebug">Debug</button>
     <button id="toggleKeyboard" class="primary spacer">Keyboard</button>
@@ -1725,6 +1784,26 @@ function pageHtml() {
       F1:"f1",F2:"f2",F3:"f3",F4:"f4",F5:"f5",F6:"f6",F7:"f7",F8:"f8",F9:"f9",F10:"f10",F11:"f11",F12:"f12"
     };
     const shifted = { "!":["lshift","1"], "@":["lshift","2"], "#":["lshift","3"], "$":["lshift","4"], "%":["lshift","5"], "^":["lshift","6"], "&":["lshift","7"], "*":["lshift","8"], "(":["lshift","9"], ")":["lshift","0"], "_":["lshift","minus"], "+":["lshift","equal"], "{":["lshift","lbracket"], "}":["lshift","rbracket"], "|":["lshift","backslash"], ":":["lshift","semicolon"], '"':["lshift","quote"], "~":["lshift","grave"], "<":["lshift","comma"], ">":["lshift","dot"], "?":["lshift","slash"] };
+    let lastMouseMoveSent = 0;
+
+    function mousePoint(e) {
+      const r = canvas.getBoundingClientRect();
+      return {
+        x: Math.round((e.clientX - r.left) * canvas.width / Math.max(1, r.width)),
+        y: Math.round((e.clientY - r.top) * canvas.height / Math.max(1, r.height)),
+      };
+    }
+    function mouseButtons(e) {
+      return (e.buttons & 1 ? 1 : 0) | (e.buttons & 2 ? 2 : 0) | (e.buttons & 4 ? 4 : 0);
+    }
+    async function sendMouse(type, e, extra = {}) {
+      const p = mousePoint(e);
+      await fetch("/mouse", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ type, x: p.x, y: p.y, buttons: mouseButtons(e), ...extra })
+      });
+    }
 
     async function sendHids(hids) {
       await fetch("/key", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ hids }) });
@@ -1922,6 +2001,7 @@ function pageHtml() {
       document.getElementById("size").textContent = s.width ? s.width + "x" + s.height + " " + s.bpp + "bpp" : "no video";
       document.getElementById("frames").textContent = s.frames + " frames";
       document.getElementById("keys").textContent = (s.keyEvents || 0) + " keys";
+      document.getElementById("mouse").textContent = (s.mouseEvents || 0) + " mouse";
       updateStats(s);
       if (s.videoSettings) {
         const hw = document.getElementById("hardwareCompression");
@@ -1969,6 +2049,28 @@ function pageHtml() {
     document.getElementById("hardwareCompression").onchange = () => { document.getElementById("hardwareCompression").indeterminate = false; dirtyVideoSettings.add("hardwareCompression"); };
     document.getElementById("force8bpp").onchange = () => { dirtyVideoSettings.add("force8bpp"); };
     document.getElementById("bseMode").onchange = () => { dirtyVideoSettings.add("bseMode"); };
+    canvas.addEventListener("contextmenu", e => e.preventDefault());
+    canvas.addEventListener("pointerdown", e => {
+      e.preventDefault();
+      canvas.setPointerCapture(e.pointerId);
+      sendMouse("button", e);
+    });
+    canvas.addEventListener("pointerup", e => {
+      e.preventDefault();
+      sendMouse("button", e);
+    });
+    canvas.addEventListener("pointermove", e => {
+      if (!canvas.width || !canvas.height) return;
+      const now = performance.now();
+      if (now - lastMouseMoveSent < 20 && e.buttons === 0) return;
+      lastMouseMoveSent = now;
+      sendMouse(e.buttons ? "button" : "move", e);
+    });
+    canvas.addEventListener("wheel", e => {
+      e.preventDefault();
+      const wheel = e.deltaY > 0 ? 1 : e.deltaY < 0 ? -1 : 0;
+      if (wheel) sendMouse("wheel", e, { wheel });
+    }, { passive: false });
     document.addEventListener("click", e => {
       const b = e.target.closest("button");
       if (!b) return;
@@ -2062,6 +2164,24 @@ const server = http.createServer(async (req, res) => {
       sendKeyCombo(body.hids);
       res.writeHead(202, { "content-type": "application/json" });
       res.end(JSON.stringify({ ok: true, keyEvents: state.keyEvents || 0 }));
+    } catch (err) {
+      res.writeHead(400, { "content-type": "application/json" });
+      res.end(JSON.stringify({ ok: false, error: err.message }));
+    }
+  } else if (req.url.startsWith("/mouse") && req.method === "POST") {
+    try {
+      const body = await readJsonBody(req);
+      const type = String(body.type || "move");
+      const x = Number(body.x);
+      const y = Number(body.y);
+      const buttons = Number(body.buttons || 0) & 7;
+      if (!Number.isFinite(x) || !Number.isFinite(y)) throw new Error("expected numeric x/y");
+      if (type === "move") sendMouseMove(x, y);
+      else if (type === "button") sendMouseButtonState(x, y, buttons, 0);
+      else if (type === "wheel") sendMouseButtonState(x, y, buttons, Number(body.wheel || 0));
+      else throw new Error(`unknown mouse event type: ${type}`);
+      res.writeHead(202, { "content-type": "application/json" });
+      res.end(JSON.stringify({ ok: true, mouseEvents: state.mouseEvents || 0, x: state.mouseX, y: state.mouseY, buttons: state.mouseButtons || 0 }));
     } catch (err) {
       res.writeHead(400, { "content-type": "application/json" });
       res.end(JSON.stringify({ ok: false, error: err.message }));
