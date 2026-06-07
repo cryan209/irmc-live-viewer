@@ -70,6 +70,11 @@ Environment variables:
 - `IRMC_JNLP`: explicit JNLP path.
 - `IRMC_RENDER_EVERY`: render every N decoded frames. Defaults to `1`.
 - `IRMC_RECORDING_LIMIT`: replay buffer frame count. Defaults to `240`.
+- `IRMC_DEBUG_PACKETS`: set to `1` to log decoded TX/RX command packets for protocol testing.
+- `IRMC_DEBUG_RAW`: set to `1` to also log raw TCP chunk boundaries.
+- `IRMC_DEBUG_PACKET_BYTES`: max bytes of packet hex to print per log line. Defaults to `96`.
+- `IRMC_DEBUG_PACKET_FILE`: optional file path to append packet debug logs.
+- `IRMC_DEBUG_PACKET_SECRETS`: set to `1` to include the client handshake packet. By default it is redacted because it can contain session material.
 - `IRMC_HARDWARE_COMPRESSION`: set startup hardware-compression flag to `1` or `0`. On tested iRMC S3 firmware this appears enabled by default; toggling it off after it has been on may increase bandwidth demand.
 - `IRMC_FORCE_8BPP`: set startup force-8bpp flag when experimental force-8bpp is enabled.
 - `IRMC_ALLOW_EXPERIMENTAL_FORCE8`: set to `1` to allow force-8bpp.

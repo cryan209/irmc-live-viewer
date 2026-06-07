@@ -23,6 +23,49 @@ const START_FORCE_8BPP = ALLOW_EXPERIMENTAL_FORCE8 && process.env.IRMC_FORCE_8BP
 const START_HARDWARE_COMPRESSION = process.env.IRMC_HARDWARE_COMPRESSION === "1" ? true : process.env.IRMC_HARDWARE_COMPRESSION === "0" ? false : null;
 const ALLOW_EXPERIMENTAL_BSE = process.env.IRMC_ALLOW_EXPERIMENTAL_BSE !== "0";
 const START_BSE_MODE = ALLOW_EXPERIMENTAL_BSE ? Math.max(0, Math.min(2, Number(process.env.IRMC_BSE_MODE || 0))) : 0;
+const DEBUG_PACKETS = process.env.IRMC_DEBUG_PACKETS === "1";
+const DEBUG_RAW_PACKETS = process.env.IRMC_DEBUG_RAW === "1";
+const DEBUG_PACKET_SECRETS = process.env.IRMC_DEBUG_PACKET_SECRETS === "1";
+const DEBUG_PACKET_BYTES = Math.max(0, Number(process.env.IRMC_DEBUG_PACKET_BYTES || 96));
+const DEBUG_PACKET_FILE = process.env.IRMC_DEBUG_PACKET_FILE || "";
+const DEBUG_PACKET_STREAM = DEBUG_PACKET_FILE ? fs.createWriteStream(DEBUG_PACKET_FILE, { flags: "a" }) : null;
+
+const COMMAND_NAMES = {
+  0x00: "Padding",
+  0x40: "OemLocalMonitorState",
+  0x41: "PowerControl",
+  0x89: "StorageStatus",
+  0xc5: "MultiUserState",
+  0xc6: "ServerDisconnect",
+  0xc7: "OemCurrentLocalMonitorState",
+  0xc8: "ServerHandshake",
+  0xc9: "FirmwareVersion",
+  0xd1: "KeyboardState",
+  0xd2: "UnknownClientD2",
+  0xd3: "RequestPrimaryControl",
+  0xd5: "InformKeyIndicators",
+  0xd8: "Disconnect",
+  0xdd: "ClientHandshake",
+  0xde: "OemMsg",
+  0xe0: "LowBandwidthSSPBitBlt",
+  0xe1: "InformVesaMode",
+  0xe2: "BitBlt",
+  0xe3: "EnhanceBitBlt",
+  0xe4: "StandbyPower",
+  0xe5: "InformCPUUtilization",
+  0xe6: "SetPalette",
+  0xe7: "BSEBitBlt",
+  0xea: "SetTextCursor",
+  0xeb: "SpecialGraphicsBit",
+  0xec: "MatroxGraphicsCursor",
+  0xed: "SSPBitBlt",
+  0xef: "SequenceAckOrNumber",
+  0xf2: "Invalidate",
+  0xf3: "InformHLevelCompression",
+  0xf6: "InformForce8BPPMode",
+  0xf7: "InformBSEMode",
+  0xf8: "NativeMessage",
+};
 
 let state = {
   status: "starting",
@@ -91,6 +134,36 @@ function setStatus(status, detail = "") {
   console.log(`[${new Date().toISOString()}] ${status}${detail ? `: ${detail}` : ""}`);
 }
 
+function commandName(cmd) {
+  return COMMAND_NAMES[cmd] || "Unknown";
+}
+
+function hexPreview(buf) {
+  const n = Math.min(buf.length, DEBUG_PACKET_BYTES);
+  const suffix = buf.length > n ? ` ...(+${buf.length - n} bytes)` : "";
+  return `${buf.subarray(0, n).toString("hex")}${suffix}`;
+}
+
+function writeDebugPacket(line) {
+  const out = `[${new Date().toISOString()}] ${line}`;
+  console.error(out);
+  if (DEBUG_PACKET_STREAM) DEBUG_PACKET_STREAM.write(`${out}\n`);
+}
+
+function logPacket(direction, buf, detail = "") {
+  if (!DEBUG_PACKETS) return;
+  const cmd = buf.length ? buf[0] : null;
+  const cmdText = cmd === null ? "--" : `0x${cmd.toString(16).padStart(2, "0")} ${commandName(cmd)}`;
+  const redacted = !DEBUG_PACKET_SECRETS && direction === "tx" && cmd === 0xdd;
+  const hex = redacted ? "<redacted client handshake; set IRMC_DEBUG_PACKET_SECRETS=1 to include>" : hexPreview(buf);
+  writeDebugPacket(`${direction} ${cmdText} len=${buf.length}${detail ? ` ${detail}` : ""} hex=${hex}`);
+}
+
+function logRawPacket(direction, buf) {
+  if (!DEBUG_RAW_PACKETS) return;
+  writeDebugPacket(`${direction}-raw len=${buf.length} hex=${hexPreview(buf)}`);
+}
+
 function le16(n) {
   const b = Buffer.alloc(2);
   b.writeUInt16LE(n & 0xffff, 0);
@@ -114,7 +187,11 @@ function latin1Padded(s, len) {
 }
 
 function send(buf) {
-  if (socket && !socket.destroyed) socket.write(buf);
+  if (socket && !socket.destroyed) {
+    logPacket("tx", buf);
+    logRawPacket("tx", buf);
+    socket.write(buf);
+  }
 }
 
 function command(id, payload = Buffer.alloc(0)) {
@@ -1144,6 +1221,7 @@ function consumeStream() {
         renderTextRegion(tm, 0, 0, tm.cols, tm.rows);
         count(cmd);
         setStatus("video", `${nextWidth}x${nextHeight} ${nextBpp}bpp text mode`);
+        logPacket("rx", rx.subarray(start, o), `offset=${start}`);
         continue;
       }
       state.width = nextWidth;
@@ -1323,9 +1401,11 @@ function consumeStream() {
     } else {
       const ctxHex = rx.subarray(Math.max(0, start - 4), Math.min(rx.length, start + 12)).toString("hex");
       console.error(`[unknown-cmd] 0x${cmd.toString(16).padStart(2, "0")} at offset ${start} frames=${state.frames} context: ${ctxHex}`);
+      logPacket("rx", rx.subarray(start, Math.min(rx.length, start + 1)), `offset=${start} incomplete-or-unknown`);
       rx = Buffer.alloc(0);
       break;
     }
+    logPacket("rx", rx.subarray(start, o), `offset=${start}`);
   }
   if (o > 0) rx = rx.subarray(o);
 }
@@ -1380,6 +1460,7 @@ function connectIrmc(args) {
   });
 
   socket.on("data", (chunk) => {
+    logRawPacket("rx", chunk);
     noteNetworkBytes(chunk.length);
     rx = Buffer.concat([rx, chunk]);
     try {
