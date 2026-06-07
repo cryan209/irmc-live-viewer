@@ -48,7 +48,7 @@ After receiving the server handshake command `0xc8`, the client sends:
 | --- | --- | --- | --- |
 | `0xdd` | Client handshake/auth block | structured auth block | Contains username and JNLP `httpdata`; password field is blank in observed applet flow. |
 | `0xf7` | `InformBSEMode` | `u32le mode` | `0` none, `1` 3bpp BSE, `2` 8bpp BSE. |
-| `0xf3` | `InformHLevelCompression` | `u8 enabled` | Java UI calls this "Hardware Compression". On tested firmware it had no visible stream effect. |
+| `0xf3` | `InformHLevelCompression` | `u8 enabled` | Java UI calls this "Hardware Compression". On tested firmware it appears enabled by default; switching it off after it has been on can increase bandwidth demand. |
 | `0xf6` | `InformForce8BPPMode` | `u8 enabled` | Java exposes a reduce-bandwidth/force-8bpp concept; behavior varies. |
 | `0xd3` | `RequestPrimaryControl` | `u8 0` | Requests primary console control. |
 | `0xf2` | `Invalidate` | region list | Requests repaint. This project sends a large full-screen region on startup. |
@@ -103,7 +103,9 @@ The viewer uses `0xf2` to request a fresh repaint after startup or video option 
 
 Payload: `u8 enabled`.
 
-Applet/resource naming maps this to "Hardware Compression". On tested firmware, probing this flag did not materially alter bpp, encoding type, fps, or bitrate.
+Applet/resource naming maps this to "Hardware Compression". On tested firmware the stream appears to start in the same state as `enabled=1`. Sending `enabled=1` keeps the stream in that state, while switching it off after it has been on can increase bandwidth demand.
+
+Treat this as an encoder-path selector, not a guaranteed bandwidth reducer. Compare bitrate/fps before and after toggles in the viewer stats before assuming it helped.
 
 ### `0xf6` Inform Force 8bpp
 
@@ -118,8 +120,8 @@ Payload: `u32le mode`.
 | Mode | Meaning | Observed effect |
 | --- | --- | --- |
 | `0` | None | Normal Enhance/HLC stream. |
-| `1` | 3bpp BSE | May switch to BSE/SSP low-bandwidth frame types. |
-| `2` | 8bpp BSE | May switch to BSE/SSP low-bandwidth frame types. |
+| `1` | 3bpp BSE | Working BSE low-bandwidth mode on tested firmware. |
+| `2` | 8bpp BSE | Working BSE low-bandwidth mode on tested firmware. |
 
 The UI exposes probe buttons that temporarily switch to BSE modes, measure the stream, and restore the previous mode.
 
@@ -145,7 +147,7 @@ Known command IDs:
 | `0xe4` | `StandbyPower` | skipped | Fixed payload. |
 | `0xe5` | `InformCPUUtilization` | skipped | Six `u32le` counters/timestamps. |
 | `0xe6` | `SetPalette` | parsed | Updates 8bpp palette. |
-| `0xe7` | `BSEBitBlt` | parsed/rendered partly | 3bpp and 8bpp BSE experimental. |
+| `0xe7` | `BSEBitBlt` | parsed/rendered | 3bpp and 8bpp BSE work on tested firmware. |
 | `0xea` | `SetTextCursor` | parsed/rendered | Text cursor position and scan lines. |
 | `0xeb` | `SpecialGraphicsBit` | skipped | 4-byte payload. |
 | `0xec` | `MatroxGraphicsCursor` | skipped | Fixed cursor block. |
@@ -336,8 +338,8 @@ The Java applet constants identify:
 | blt type | Meaning | Viewer support |
 | --- | --- | --- |
 | `0` | no BSE | not used as an image mode |
-| `3` | 3bpp BSE | experimental |
-| `8` | 8bpp BSE | experimental |
+| `3` | 3bpp BSE | supported on tested firmware |
+| `8` | 8bpp BSE | supported on tested firmware |
 | `16` | 16bpp BSE | not decoded |
 | `18` | true 8bpp | not decoded |
 
@@ -387,7 +389,7 @@ The Java applet maps the three bitplanes into 24-bit color using shifts:
 [7, 15, 23]
 ```
 
-The viewer currently decodes these bitplanes and applies "intense" color expansion when mask bits are fully set.
+The viewer decodes these bitplanes and applies "intense" color expansion when mask bits are fully set. This mode works on tested iRMC S3 firmware.
 
 ### 8bpp BSE
 
@@ -397,7 +399,7 @@ The Java applet maps eight bitplanes into 24-bit color using shifts:
 [6, 7, 12, 13, 14, 15, 22, 23]
 ```
 
-This is also experimental in the viewer.
+The viewer decodes this mode and it works on tested iRMC S3 firmware.
 
 ## SSP Low-Bandwidth Frames: `0xe0` and `0xed`
 
@@ -472,5 +474,5 @@ Still incomplete:
 
 - JNLP files and `httpdata` expire and are sensitive.
 - Packet captures can contain auth/session material.
-- BSE low-bandwidth modes can put the stream into formats this viewer may not render yet.
+- 3bpp and 8bpp BSE low-bandwidth modes are implemented, but SSP low-bandwidth frames can still put the stream into formats this viewer does not render yet.
 - If the stream appears frozen, check `pending`, `rx buffered`, and `enhance types` before assuming the iRMC stopped sending data.

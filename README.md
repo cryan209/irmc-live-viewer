@@ -12,7 +12,7 @@ This project reverse-engineers enough of the Mahogany stream to display the remo
 - Power controls
 - Text mode rendering for BIOS/bootloader screens
 - Update rectangle overlay, stats, and replay recording
-- Experimental video options/probes for hardware compression, force-8bpp, and BSE low-bandwidth modes
+- Video options/probes for hardware compression, force-8bpp, and BSE low-bandwidth modes
 - Diagnostic pcap stream extraction/decoder helpers
 
 ## Requirements
@@ -61,7 +61,7 @@ Environment variables:
 - `IRMC_JNLP`: explicit JNLP path.
 - `IRMC_RENDER_EVERY`: render every N decoded frames. Defaults to `1`.
 - `IRMC_RECORDING_LIMIT`: replay buffer frame count. Defaults to `240`.
-- `IRMC_HARDWARE_COMPRESSION`: set startup hardware-compression flag to `1` or `0`.
+- `IRMC_HARDWARE_COMPRESSION`: set startup hardware-compression flag to `1` or `0`. On tested iRMC S3 firmware this appears enabled by default; toggling it off after it has been on may increase bandwidth demand.
 - `IRMC_FORCE_8BPP`: set startup force-8bpp flag when experimental force-8bpp is enabled.
 - `IRMC_ALLOW_EXPERIMENTAL_FORCE8`: set to `1` to allow force-8bpp.
 - `IRMC_ALLOW_EXPERIMENTAL_BSE`: set to `0` to disable BSE low-bandwidth modes.
@@ -79,4 +79,4 @@ Power actions are sent directly to the iRMC. The UI asks for confirmation before
 
 ## Status
 
-This is an experimental viewer built from live reverse engineering against iRMC S3 firmware. The main HLC path and text mode work, but some low-bandwidth/BSE variants are still under active investigation.
+This is an experimental viewer built from live reverse engineering against iRMC S3 firmware. The main HLC path, text mode, and 3bpp/8bpp BSE low-bandwidth paths work on tested firmware. SSP and some less common enhance variants are still under active investigation.
