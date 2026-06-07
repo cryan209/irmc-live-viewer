@@ -31,7 +31,7 @@ Run with a fresh iRMC session fetched from the web UI:
 ./irmc-live-viewer
 ```
 
-The wrapper asks for the iRMC host, web port, username, password, and local viewer port. It can save the non-secret defaults to `~/.config/irmc-live-viewer/config.env` for next time; the password is never saved by the wrapper.
+The wrapper asks for the iRMC host, web port, username, password, and local viewer port. IPv6 addresses are supported; enter raw addresses like `2001:db8::10`, or bracketed addresses with a port like `[2001:db8::10]:80`. It can save the non-secret defaults to `~/.config/irmc-live-viewer/config.env` for next time; the password is never saved by the wrapper.
 
 The underscore alias also works:
 

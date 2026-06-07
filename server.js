@@ -360,6 +360,16 @@ function safeGlob(dir, re) {
   }
 }
 
+function stripIpv6Brackets(host) {
+  const m = String(host || "").match(/^\[([^\]]+)\]$/);
+  return m ? m[1] : String(host || "");
+}
+
+function formatUrlHost(host) {
+  const h = stripIpv6Brackets(host);
+  return h.includes(":") ? `[${h}]` : h;
+}
+
 function parseJnlp(file) {
   const xml = fs.readFileSync(file, "utf8");
   const args = {};
@@ -368,7 +378,7 @@ function parseJnlp(file) {
     const kv = text.match(/^-([^=]+)=(.*)$/);
     if (kv) args[kv[1]] = kv[2];
   }
-  if (process.env.IRMC_HOST) args.ipaddress = HOST;
+  if (process.env.IRMC_HOST) args.ipaddress = stripIpv6Brackets(HOST);
   else args.ipaddress ||= HOST;
   args.VncPort ||= "80";
   state.jnlp = file;
@@ -394,7 +404,7 @@ function fetchFreshJnlp() {
   fs.mkdirSync(dir, { recursive: true });
   const home = path.join(dir, "home.html");
   const jnlp = path.join(dir, "avr.jnlp");
-  const hostPort = IRMC_PORT ? `${HOST}:${IRMC_PORT}` : HOST;
+  const hostPort = `${formatUrlHost(HOST)}${IRMC_PORT ? `:${IRMC_PORT}` : ""}`;
   const base = `${SCHEME}://${hostPort}`;
 
   curl([`${base}/`], home);
@@ -1359,7 +1369,7 @@ function connectIrmc(args) {
   byteSamples = [];
   frameTimes = [];
 
-  const host = args.ipaddress || HOST;
+  const host = stripIpv6Brackets(args.ipaddress || HOST);
   const port = Number(args.VncPort || 80);
   setStatus("connecting", `${host}:${port}`);
 

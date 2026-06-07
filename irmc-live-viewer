@@ -96,10 +96,23 @@ save_config() {
 }
 
 split_host_port() {
-  local maybe_host="${host%:*}"
-  local maybe_port="${host##*:}"
+  local maybe_host maybe_port bracket_host bracket_rest
 
-  if [[ -z "$irmc_port" && "$host" == *:* && "$host" != \[*\] && "$maybe_port" =~ '^[0-9]+$' ]]; then
+  if [[ "$host" == \[*\]* ]]; then
+    bracket_host="${host#\[}"
+    bracket_host="${bracket_host%%\]*}"
+    bracket_rest="${host#*\]}"
+    if [[ -z "$irmc_port" && "$bracket_rest" == :* && "${bracket_rest#:}" =~ '^[0-9]+$' ]]; then
+      irmc_port="${bracket_rest#:}"
+    fi
+    host="$bracket_host"
+    return
+  fi
+
+  maybe_host="${host%:*}"
+  maybe_port="${host##*:}"
+
+  if [[ -z "$irmc_port" && "$host" == *:* && "$host" != *:*:* && "$maybe_port" =~ '^[0-9]+$' ]]; then
     host="$maybe_host"
     irmc_port="$maybe_port"
   fi
