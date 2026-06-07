@@ -77,9 +77,9 @@ Mouse command IDs and payloads were confirmed from the Java applet classes:
 | --- | --- | --- | --- |
 | `0xb1` | `ClientAbsoluteMode` | `u8 enabled` | The viewer sends `1` before absolute mouse input. |
 | `0xb2` | `ClientRelativeMode` | `u8 flags` | Bit `0` is relative mode, bit `4` is hide mouse. The viewer sends `0` for absolute mode with no hide. |
-| `0xb3` | `ButtonStateAtAbsolute` | `i16le x`, `i16le y`, `u8 count`, button states | Absolute button/wheel state at framebuffer coordinates. |
-| `0xb4` | `ButtonStateAtRelative` | `i16le dx`, `i16le dy`, `u8 count`, button states | Relative button/wheel state; not used by the viewer yet. |
-| `0xb5` | `MouseMove` | `i16le x`, `i16le y` | Absolute or relative depending on active mouse mode. |
+| `0xb3` | `ButtonStateAtAbsolute` | `i32le x`, `i32le y`, `u8 count`, button states | Absolute button/wheel state at framebuffer coordinates. Java passes short-sized coordinate values, but `ButtonStateAtAbsolute.writeBuffer()` writes them with `BufferMgr.write(int)`, so the wire fields are 32-bit. |
+| `0xb4` | `ButtonStateAtRelative` | `i32le dx`, `i32le dy`, `u8 count`, button states | Relative button/wheel state; not used by the viewer yet. |
+| `0xb5` | `MouseMove` | `i32le x`, `i32le y` | Absolute or relative depending on active mouse mode. Java's `MouseMove.writeBuffer()` uses `BufferMgr.write(int)`, so the command is 9 bytes total. |
 
 The applet sends three button states in left, right, middle order. Each button state is one byte:
 
@@ -91,6 +91,8 @@ The applet sends three button states in left, right, middle order. Each button s
 For wheel events, the third button state uses `((64 + wheelRotation) << 1) | middlePressed`. Browser wheel deltas are currently normalized to `-1` or `1`.
 
 Mouse input is experimental in this viewer. On tested firmware, high-rate absolute move packets can cause video updates to stop, so browser mouse input is disabled by default and coalesced/throttled when enabled.
+
+The applet default settings are `mouse.mode=1` (absolute) and `synch.mouse.mode.chg=1`, so it sends `ClientAbsoluteMode(true)` and `ClientRelativeMode(false, hide=false)` when entering absolute mouse mode.
 
 ### `0xd3` Request Primary Control
 

@@ -194,6 +194,12 @@ function i16(n) {
   return b;
 }
 
+function i32(n) {
+  const b = Buffer.alloc(4);
+  b.writeInt32LE(Math.max(-2147483648, Math.min(2147483647, Number(n) || 0)), 0);
+  return b;
+}
+
 function le32(n) {
   const b = Buffer.alloc(4);
   b.writeUInt32LE(n >>> 0, 0);
@@ -314,7 +320,7 @@ function sendMouseMove(x, y) {
   sendMouseAbsoluteMode();
   const mx = clampMouseCoord(x, state.width);
   const my = clampMouseCoord(y, state.height);
-  send(command(0xb5, Buffer.concat([i16(mx), i16(my)])));
+  send(command(0xb5, Buffer.concat([i32(mx), i32(my)])));
   state.mouseEvents = (state.mouseEvents || 0) + 1;
   state.mouseX = mx;
   state.mouseY = my;
@@ -325,7 +331,7 @@ function sendMouseButtonState(x, y, buttons, wheel = 0) {
   sendMouseAbsoluteMode();
   const mx = clampMouseCoord(x, state.width);
   const my = clampMouseCoord(y, state.height);
-  send(command(0xb3, Buffer.concat([i16(mx), i16(my), Buffer.from([3, ...mouseButtonStates(buttons, wheel)])])));
+  send(command(0xb3, Buffer.concat([i32(mx), i32(my), Buffer.from([3, ...mouseButtonStates(buttons, wheel)])])));
   state.mouseEvents = (state.mouseEvents || 0) + 1;
   state.mouseX = mx;
   state.mouseY = my;
