@@ -9,7 +9,7 @@ This project reverse-engineers enough of the Mahogany stream to display the remo
 - Browser-based live console at `http://127.0.0.1:8090`
 - JNLP/session parsing, with optional fresh JNLP fetch using iRMC HTTP digest auth
 - Keyboard toolbar and virtual keyboard
-- Absolute mouse movement, buttons, and wheel events
+- Experimental absolute mouse movement, buttons, and wheel events
 - Power controls
 - Text mode rendering for BIOS/bootloader screens
 - Update rectangle overlay, stats, and replay recording
@@ -72,6 +72,7 @@ Environment variables:
 - `IRMC_JNLP`: explicit JNLP path.
 - `IRMC_RENDER_EVERY`: render every N decoded frames. Defaults to `1`.
 - `IRMC_RECORDING_LIMIT`: replay buffer frame count. Defaults to `240`.
+- `IRMC_ENABLE_MOUSE`: set to `1` to enable mouse input by default. Otherwise the Debug panel mouse toggle must be enabled before mouse packets are sent.
 - `IRMC_DEBUG_PACKETS`: set to `1` to log decoded TX/RX command packets for protocol testing.
 - `IRMC_DEBUG_RAW`: set to `1` to also log raw TCP chunk boundaries.
 - `IRMC_DEBUG_PACKET_BYTES`: max bytes of packet hex to print per log line. Defaults to `96`.

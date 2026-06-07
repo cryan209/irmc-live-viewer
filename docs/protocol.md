@@ -90,6 +90,8 @@ The applet sends three button states in left, right, middle order. Each button s
 
 For wheel events, the third button state uses `((64 + wheelRotation) << 1) | middlePressed`. Browser wheel deltas are currently normalized to `-1` or `1`.
 
+Mouse input is experimental in this viewer. On tested firmware, high-rate absolute move packets can cause video updates to stop, so browser mouse input is disabled by default and coalesced/throttled when enabled.
+
 ### `0xd3` Request Primary Control
 
 Payload currently sent as one zero byte.

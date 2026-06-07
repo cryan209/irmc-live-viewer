@@ -24,6 +24,7 @@ const START_HARDWARE_COMPRESSION = process.env.IRMC_HARDWARE_COMPRESSION === "1"
 const ALLOW_EXPERIMENTAL_BSE = process.env.IRMC_ALLOW_EXPERIMENTAL_BSE !== "0";
 const START_BSE_MODE = ALLOW_EXPERIMENTAL_BSE ? Math.max(0, Math.min(2, Number(process.env.IRMC_BSE_MODE || 0))) : 0;
 const ALLOW_RAW_ENHANCE_BY_DEFAULT = process.env.IRMC_ALLOW_RAW_ENHANCE_BY_DEFAULT === "1";
+const ENABLE_MOUSE_BY_DEFAULT = process.env.IRMC_ENABLE_MOUSE === "1";
 const DEBUG_PACKETS = process.env.IRMC_DEBUG_PACKETS === "1";
 const DEBUG_RAW_PACKETS = process.env.IRMC_DEBUG_RAW === "1";
 const DEBUG_PACKET_SECRETS = process.env.IRMC_DEBUG_PACKET_SECRETS === "1";
@@ -121,6 +122,7 @@ let state = {
     enhanceType: null,
     updatedAt: null,
   },
+  mouseEnabled: ENABLE_MOUSE_BY_DEFAULT,
 };
 
 let socket = null;
@@ -1572,6 +1574,9 @@ function connectIrmc(args) {
   state.width = 0;
   state.height = 0;
   state.bpp = 32;
+  state.mouseEnabled = ENABLE_MOUSE_BY_DEFAULT;
+  state.mouseEvents = 0;
+  state.mouseButtons = 0;
   state.observedStream = {
     mode: "unknown",
     compression: "unknown",
@@ -1717,6 +1722,7 @@ function pageHtml() {
   <aside id="debug" aria-label="Debug tools">
     <div class="line">
       <label><input id="showUpdates" type="checkbox"> Updates</label>
+      <label title="Experimental. Disabled by default because high-rate mouse movement can stop video on tested firmware."><input id="enableMouse" type="checkbox"> Mouse</label>
       <label>Color <input id="updateColor" type="color" value="#ff2020"></label>
       <label>Border <select id="updateBorder"><option value="scaled">scaled</option><option value="1">1px</option></select></label>
       <button id="startReplay">Replay</button>
@@ -1766,6 +1772,11 @@ function pageHtml() {
     const dirtyVideoSettings = new Set();
     const allowRawEnhanceByDefault = ${ALLOW_RAW_ENHANCE_BY_DEFAULT ? "true" : "false"};
     const allowExperimentalForce8 = ${ALLOW_EXPERIMENTAL_FORCE8 ? "true" : "false"};
+    let mouseInFlight = false;
+    let pendingMouse = null;
+    let mouseFlushTimer = null;
+    let lastMouseSentAt = 0;
+    let lastMouseKey = "";
     const HID = {
       a:4,b:5,c:6,d:7,e:8,f:9,g:10,h:11,i:12,j:13,k:14,l:15,m:16,n:17,o:18,p:19,q:20,r:21,s:22,t:23,u:24,v:25,w:26,x:27,y:28,z:29,
       "1":30,"2":31,"3":32,"4":33,"5":34,"6":35,"7":36,"8":37,"9":38,"0":39,
@@ -1796,13 +1807,50 @@ function pageHtml() {
     function mouseButtons(e) {
       return (e.buttons & 1 ? 1 : 0) | (e.buttons & 2 ? 2 : 0) | (e.buttons & 4 ? 4 : 0);
     }
-    async function sendMouse(type, e, extra = {}) {
+    function mouseIsEnabled() {
+      return document.getElementById("enableMouse").checked;
+    }
+    async function flushMouse() {
+      if (mouseInFlight || !pendingMouse) return;
+      const event = pendingMouse;
+      pendingMouse = null;
+      mouseInFlight = true;
+      try {
+        await fetch("/mouse", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ ...event, allowMouse: true })
+        });
+      } finally {
+        mouseInFlight = false;
+        if (pendingMouse) setTimeout(flushMouse, 25);
+      }
+    }
+    function queueMouse(event, minIntervalMs = 100) {
+      if (!mouseIsEnabled()) return;
+      const now = performance.now();
+      const key = event.type + ":" + event.x + ":" + event.y + ":" + event.buttons + ":" + (event.wheel || 0);
+      if (key === lastMouseKey && event.type === "move") return;
+      if (event.type === "move" && now - lastMouseSentAt < minIntervalMs) {
+        pendingMouse = event;
+        if (!mouseFlushTimer) {
+          mouseFlushTimer = setTimeout(() => {
+            mouseFlushTimer = null;
+            lastMouseSentAt = performance.now();
+            lastMouseKey = pendingMouse ? (pendingMouse.type + ":" + pendingMouse.x + ":" + pendingMouse.y + ":" + pendingMouse.buttons + ":" + (pendingMouse.wheel || 0)) : lastMouseKey;
+            flushMouse();
+          }, Math.max(10, minIntervalMs - (now - lastMouseSentAt)));
+        }
+        return;
+      }
+      lastMouseSentAt = now;
+      lastMouseKey = key;
+      pendingMouse = event;
+      flushMouse();
+    }
+    function sendMouse(type, e, extra = {}) {
       const p = mousePoint(e);
-      await fetch("/mouse", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ type, x: p.x, y: p.y, buttons: mouseButtons(e), ...extra })
-      });
+      queueMouse({ type, x: p.x, y: p.y, buttons: mouseButtons(e), ...extra }, e.buttons ? 50 : 125);
     }
 
     async function sendHids(hids) {
@@ -2002,6 +2050,7 @@ function pageHtml() {
       document.getElementById("frames").textContent = s.frames + " frames";
       document.getElementById("keys").textContent = (s.keyEvents || 0) + " keys";
       document.getElementById("mouse").textContent = (s.mouseEvents || 0) + " mouse";
+      document.getElementById("enableMouse").checked = !!s.mouseEnabled;
       updateStats(s);
       if (s.videoSettings) {
         const hw = document.getElementById("hardwareCompression");
@@ -2034,6 +2083,15 @@ function pageHtml() {
     document.getElementById("reconnect").onclick = () => fetch("/reconnect", { method: "POST" });
     document.getElementById("toggleKeyboard").onclick = () => document.getElementById("vk").classList.toggle("open");
     document.getElementById("toggleDebug").onclick = () => document.getElementById("debug").classList.toggle("open");
+    document.getElementById("enableMouse").onchange = async (e) => {
+      await fetch("/mouse/enable", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ enabled: e.target.checked })
+      });
+      pendingMouse = null;
+      lastMouseKey = "";
+    };
     document.getElementById("showUpdates").onchange = drawScreen;
     document.getElementById("updateColor").oninput = drawScreen;
     document.getElementById("updateBorder").onchange = drawScreen;
@@ -2168,9 +2226,25 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(400, { "content-type": "application/json" });
       res.end(JSON.stringify({ ok: false, error: err.message }));
     }
-  } else if (req.url.startsWith("/mouse") && req.method === "POST") {
+  } else if (req.url.startsWith("/mouse/enable") && req.method === "POST") {
     try {
       const body = await readJsonBody(req);
+      state.mouseEnabled = !!body.enabled;
+      if (!state.mouseEnabled) {
+        state.mouseAbsoluteModeSent = false;
+        state.mouseButtons = 0;
+      }
+      res.writeHead(202, { "content-type": "application/json" });
+      res.end(JSON.stringify({ ok: true, mouseEnabled: state.mouseEnabled }));
+    } catch (err) {
+      res.writeHead(400, { "content-type": "application/json" });
+      res.end(JSON.stringify({ ok: false, error: err.message }));
+    }
+  } else if (req.url.startsWith("/mouse") && req.method === "POST") {
+    try {
+      if (!state.mouseEnabled) throw new Error("mouse input is disabled");
+      const body = await readJsonBody(req);
+      if (body.allowMouse !== true && !ENABLE_MOUSE_BY_DEFAULT) throw new Error("mouse input requires allowMouse=true");
       const type = String(body.type || "move");
       const x = Number(body.x);
       const y = Number(body.y);
