@@ -67,6 +67,10 @@ Environment variables:
 - `IRMC_ALLOW_EXPERIMENTAL_BSE`: set to `0` to disable BSE low-bandwidth modes.
 - `IRMC_BSE_MODE`: startup BSE mode, `0`, `1`, or `2`.
 
+## Protocol Notes
+
+See [docs/protocol.md](docs/protocol.md) for the current reverse-engineered Mahogany command map, video modes, frame formats, BSE notes, and known unknowns.
+
 ## Safety Notes
 
 Do not commit real `avr.jnlp` files, cookies, packet captures, or logs from your environment. They can contain session tokens, network details, or credentials. The `.gitignore` excludes the common local artifacts.
