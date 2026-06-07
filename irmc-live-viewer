@@ -1,0 +1,23 @@
+#!/usr/bin/env zsh
+set -euo pipefail
+
+script_dir="${0:A:h}"
+host="${1:-${IRMC_HOST:-}}"
+user="${IRMC_USER:-admin}"
+port="${IRMC_VIEWER_PORT:-8090}"
+
+if [[ -n "$host" ]]; then
+  export IRMC_HOST="$host"
+fi
+
+if [[ -n "$host" && -z "${IRMC_PASS:-}" ]]; then
+  print -n "iRMC password for $user@$host: " >&2
+  stty -echo
+  read -r IRMC_PASS
+  stty echo
+  print >&2
+  export IRMC_PASS
+fi
+
+echo "Starting live iRMC viewer on http://127.0.0.1:$port" >&2
+exec node "$script_dir/server.js"

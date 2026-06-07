@@ -1,0 +1,26 @@
+{
+  "name": "irmc-live-viewer",
+  "version": "0.1.0",
+  "description": "Experimental HTML5 KVM viewer for Fujitsu iRMC S3 Mahogany AVR sessions.",
+  "main": "server.js",
+  "bin": {
+    "irmc-live-viewer": "./irmc-live-viewer",
+    "irmc-decode-mahogany": "./irmc-decode-mahogany.js",
+    "irmc-extract-pcap-streams": "./irmc-extract-pcap-streams.js"
+  },
+  "scripts": {
+    "check": "node --check server.js && node --check irmc-decode-mahogany.js && node --check irmc-extract-pcap-streams.js",
+    "start": "node server.js"
+  },
+  "keywords": [
+    "irmc",
+    "fujitsu",
+    "kvm",
+    "mahogany",
+    "html5"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  }
+}

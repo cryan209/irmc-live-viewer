@@ -1,0 +1,19 @@
+node_modules/
+.DS_Store
+
+# iRMC session material
+*.jnlp
+cookies.txt
+home.html
+irmc-curl/
+irmc-captures/
+*.pcap
+*.bin
+
+# Local logs and recordings
+*.log
+recordings/
+
+# Vendor binaries from the original Java applet/JRE
+*.jar
+zulu*/
