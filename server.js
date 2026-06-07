@@ -100,11 +100,21 @@ let state = {
   },
   updateRects: [],
   videoSettings: {
-    hardwareCompression: START_HARDWARE_COMPRESSION ?? true,
+    hardwareCompression: START_HARDWARE_COMPRESSION,
     force8bpp: START_FORCE_8BPP,
     bseMode: START_BSE_MODE,
     unsupportedBseFrames: 0,
     probes: [],
+  },
+  observedStream: {
+    mode: "unknown",
+    compression: "unknown",
+    bseMode: null,
+    force8bpp: null,
+    bpp: null,
+    command: null,
+    enhanceType: null,
+    updatedAt: null,
   },
 };
 
@@ -234,7 +244,7 @@ function sendStartupMessages(args) {
       state.videoSettings.hardwareCompression = START_HARDWARE_COMPRESSION;
     } else {
       setStatus("video-setting", "ignored unsafe startup hardware compression off");
-      state.videoSettings.hardwareCompression = true;
+      state.videoSettings.hardwareCompression = null;
     }
   }
   if (START_FORCE_8BPP) send(command(0xf6, Buffer.from([1])));
@@ -266,7 +276,6 @@ function sendKeyCombo(hids) {
 function sendVideoSetting(name, value) {
   if (name === "hardwareCompression") {
     if (!value && !ALLOW_UNSAFE_HARDWARE_COMPRESSION_OFF) {
-      state.videoSettings.hardwareCompression = true;
       throw new Error("refusing to send hardware compression off; set IRMC_ALLOW_UNSAFE_HARDWARE_COMPRESSION_OFF=1 to allow f3 00");
     }
     if (state.videoSettings.hardwareCompression === !!value) return false;
@@ -315,6 +324,7 @@ function snapshotVideoState() {
     commands: cloneCommands(),
     stats: { ...state.stats },
     videoSettings: { ...state.videoSettings, probes: undefined },
+    observedStream: { ...state.observedStream },
   };
 }
 
@@ -395,6 +405,15 @@ function noteDecodedFrame(encoding, encodedBytes, updates, decodeMs = 0) {
   state.stats.lastUpdates = updates?.length || 0;
   state.stats.lastDecodeMs = Math.round(decodeMs * 10) / 10;
   state.updateRects = (updates || []).slice(0, 256);
+}
+
+function observeStream(fields) {
+  state.observedStream = {
+    ...state.observedStream,
+    ...fields,
+    bpp: state.bpp,
+    updatedAt: new Date().toISOString(),
+  };
 }
 
 function noteEnhanceType(type) {
@@ -1239,6 +1258,7 @@ function consumeStream() {
         state.width = nextWidth;
         state.height = nextHeight;
         state.bpp = nextBpp;
+        observeStream({ mode: "text", compression: "none", bseMode: null, force8bpp: null, command: "0xe1", enhanceType: null });
         framebuffer = Buffer.alloc(state.width * state.height * 3);
         const cols = Math.max(1, Math.round(nextWidth / (textMode?.fontWidth || 8)));
         const rows = Math.max(1, Math.round(nextHeight / (textMode?.fontHeight || 16)));
@@ -1252,6 +1272,7 @@ function consumeStream() {
       state.width = nextWidth;
       state.height = nextHeight;
       state.bpp = nextBpp;
+      observeStream({ mode: "graphics", bseMode: null, force8bpp: nextBpp === 8 ? "maybe" : false, command: "0xe1", enhanceType: null });
       framebuffer = Buffer.alloc(state.width * state.height * 3);
       count(cmd);
       setStatus("video", `${state.width}x${state.height} ${state.bpp}bpp`);
@@ -1270,6 +1291,7 @@ function consumeStream() {
         state.frames++;
         const decodeMs = Number(process.hrtime.bigint() - decodeStarted) / 1e6;
         noteDecodedFrame(`BitBlt ${parsed.frame.bltType}`, parsed.frame.data.length, updates, decodeMs);
+        observeStream({ mode: "bitblt", compression: "none", bseMode: null, force8bpp: state.bpp === 8 ? "maybe" : false, command: "0xe2", enhanceType: parsed.frame.bltType });
         latestPng = renderPng();
         latestPngRev++;
         rememberRenderedFrame(`BitBlt ${parsed.frame.bltType}`, parsed.frame.data.length, updates);
@@ -1297,6 +1319,14 @@ function consumeStream() {
         const decodeMs = Number(process.hrtime.bigint() - decodeStarted) / 1e6;
         const encoding = `${isHlc ? "EnhanceHLC" : "EnhanceRaw"} ${parsed.frame.bltType}`;
         noteDecodedFrame(encoding, parsed.frame.data.length, updates, decodeMs);
+        observeStream({
+          mode: isHlc ? "enhance-hlc" : "enhance-raw",
+          compression: isHlc ? "hlc" : "none",
+          bseMode: null,
+          force8bpp: [501, -32267].includes(parsed.frame.bltType) ? true : (state.bpp === 8 ? "maybe" : false),
+          command: "0xe3",
+          enhanceType: parsed.frame.bltType,
+        });
         if (state.frames % RENDER_EVERY === 0) {
           latestPng = renderPng();
           latestPngRev++;
@@ -1305,6 +1335,14 @@ function consumeStream() {
       } else {
         state.stats.lastEncoding = `Enhance ${parsed.frame.bltType} unsupported`;
         state.stats.lastEncodedBytes = parsed.frame.data.length;
+        observeStream({
+          mode: "enhance-unsupported",
+          compression: [498, -32270, 501, -32267].includes(parsed.frame.bltType) ? "hlc" : "unknown",
+          bseMode: null,
+          force8bpp: [501, -32267].includes(parsed.frame.bltType) ? true : null,
+          command: "0xe3",
+          enhanceType: parsed.frame.bltType,
+        });
       }
     } else if (cmd === 0xe0 || cmd === 0xed) {
       const parsed = readSspBitBltAt(rx, o);
@@ -1314,6 +1352,7 @@ function consumeStream() {
       state.videoSettings.unsupportedBseFrames = (state.videoSettings.unsupportedBseFrames || 0) + 1;
       state.stats.lastEncoding = cmd === 0xe0 ? "LowBandwidthSSP unsupported" : "SSP unsupported";
       state.stats.lastEncodedBytes = parsed.frame.compressedLength;
+      observeStream({ mode: cmd === 0xe0 ? "low-bandwidth-ssp" : "ssp", compression: "unknown", bseMode: "ssp", force8bpp: null, command: `0x${cmd.toString(16)}`, enhanceType: null });
       sendSequenceAck(parsed.frame.sequence);
     } else if (cmd === 0xe7) {
       const parsed = readBseBitBltAt(rx, o);
@@ -1326,6 +1365,7 @@ function consumeStream() {
         state.frames++;
         const decodeMs = Number(process.hrtime.bigint() - decodeStarted) / 1e6;
         noteDecodedFrame(`BSEBitBlt ${parsed.frame.bltType}`, parsed.frame.compressedLength, updates, decodeMs);
+        observeStream({ mode: "bse", compression: "bse-rle", bseMode: parsed.frame.bltType, force8bpp: parsed.frame.bltType === 8, command: "0xe7", enhanceType: null });
         latestPng = renderPng();
         latestPngRev++;
         rememberRenderedFrame(`BSEBitBlt ${parsed.frame.bltType}`, parsed.frame.compressedLength, updates);
@@ -1333,6 +1373,7 @@ function consumeStream() {
         state.videoSettings.unsupportedBseFrames = (state.videoSettings.unsupportedBseFrames || 0) + 1;
         state.stats.lastEncoding = `BSEBitBlt ${parsed.frame.bltType} unsupported`;
         state.stats.lastEncodedBytes = parsed.frame.compressedLength;
+        observeStream({ mode: "bse-unsupported", compression: "bse-rle", bseMode: parsed.frame.bltType, force8bpp: parsed.frame.bltType === 8 ? true : null, command: "0xe7", enhanceType: null });
       }
       sendSequenceAck(parsed.frame.sequence);
     } else if (cmd === 0xe6) {
@@ -1471,6 +1512,16 @@ function connectIrmc(args) {
   state.width = 0;
   state.height = 0;
   state.bpp = 32;
+  state.observedStream = {
+    mode: "unknown",
+    compression: "unknown",
+    bseMode: null,
+    force8bpp: null,
+    bpp: null,
+    command: null,
+    enhanceType: null,
+    updatedAt: null,
+  };
   byteSamples = [];
   frameTimes = [];
 
@@ -1651,7 +1702,7 @@ function pageHtml() {
     let imageLoadStarted = 0;
     let browserImageMs = 0;
     let browserDrawMs = 0;
-    let videoSettingsDirty = false;
+    const dirtyVideoSettings = new Set();
     const allowUnsafeHardwareCompressionOff = ${ALLOW_UNSAFE_HARDWARE_COMPRESSION_OFF ? "true" : "false"};
     const HID = {
       a:4,b:5,c:6,d:7,e:8,f:9,g:10,h:11,i:12,j:13,k:14,l:15,m:16,n:17,o:18,p:19,q:20,r:21,s:22,t:23,u:24,v:25,w:26,x:27,y:28,z:29,
@@ -1692,13 +1743,12 @@ function pageHtml() {
         force8bpp: document.getElementById("force8bpp").checked,
         bseMode: Number(document.getElementById("bseMode").value),
       };
-      const current = (latestState && latestState.videoSettings) || {};
       const patch = {};
-      if (typeof current.hardwareCompression !== "boolean" || current.hardwareCompression !== next.hardwareCompression) patch.hardwareCompression = next.hardwareCompression;
-      if (!!current.force8bpp !== next.force8bpp) patch.force8bpp = next.force8bpp;
-      if (Number(current.bseMode || 0) !== next.bseMode) patch.bseMode = next.bseMode;
+      if (dirtyVideoSettings.has("hardwareCompression")) patch.hardwareCompression = next.hardwareCompression;
+      if (dirtyVideoSettings.has("force8bpp")) patch.force8bpp = next.force8bpp;
+      if (dirtyVideoSettings.has("bseMode")) patch.bseMode = next.bseMode;
       if (!Object.keys(patch).length) {
-        videoSettingsDirty = false;
+        dirtyVideoSettings.clear();
         document.getElementById("probeResult").textContent = "settings: no changes";
         return;
       }
@@ -1708,7 +1758,7 @@ function pageHtml() {
         body: JSON.stringify(patch)
       }).then(r => r.json()).then(result => {
         document.getElementById("probeResult").textContent = result.ok ? ("settings: applied " + Object.keys(patch).join(", ")) : ("settings error: " + result.error);
-        if (result.ok) videoSettingsDirty = false;
+        if (result.ok) dirtyVideoSettings.clear();
       });
     }
     async function probeHardwareCompression() {
@@ -1724,7 +1774,7 @@ function pageHtml() {
         body: JSON.stringify({ name: "hardwareCompression", value: target, settleMs: 4500, restore: true })
       }).then(r => r.json());
       document.getElementById("probeResult").textContent = result.ok ? ("probe: " + result.probe.summary) : ("probe error: " + result.error);
-      videoSettingsDirty = false;
+      dirtyVideoSettings.clear();
     }
     async function probeBseMode(mode) {
       document.getElementById("probeResult").textContent = "probe: temporarily testing BSE " + mode;
@@ -1734,7 +1784,7 @@ function pageHtml() {
         body: JSON.stringify({ name: "bseMode", value: mode, settleMs: 5500, restore: true })
       }).then(r => r.json());
       document.getElementById("probeResult").textContent = result.ok ? ("probe: " + result.probe.summary) : ("probe error: " + result.error);
-      videoSettingsDirty = false;
+      dirtyVideoSettings.clear();
     }
     function drawScreen() {
       const drawStarted = performance.now();
@@ -1755,6 +1805,7 @@ function pageHtml() {
     }
     function updateStats(s) {
       const stats = s.stats || {};
+      const observed = s.observedStream || {};
       const localMs = (stats.lastDecodeMs || 0) + (stats.lastPngMs || 0) + browserImageMs + browserDrawMs;
       let bottleneck = "unknown";
       if ((stats.frameIntervalMs || 0) > 0 && localMs > (stats.frameIntervalMs || 0) * 0.55) bottleneck = "viewer/local";
@@ -1765,6 +1816,11 @@ function pageHtml() {
         "fps: " + (stats.fps || 0),
         "bitrate: " + (stats.bitrateKbps || 0) + " kbps",
         "encoding: " + (stats.lastEncoding || "unknown"),
+        "observed mode: " + (observed.mode || "unknown"),
+        "observed compression: " + (observed.compression || "unknown"),
+        "observed bse: " + (observed.bseMode === null || observed.bseMode === undefined ? "none/unknown" : observed.bseMode),
+        "observed force8: " + (observed.force8bpp === null || observed.force8bpp === undefined ? "unknown" : observed.force8bpp),
+        "observed command: " + (observed.command || "unknown") + (observed.enhanceType === null || observed.enhanceType === undefined ? "" : " type " + observed.enhanceType),
         "enhance types: " + JSON.stringify(stats.enhanceTypes || {}),
         "pending: " + (stats.pendingCommand || "none"),
         "rx buffered: " + (stats.rxBuffered || 0) + " bytes",
@@ -1852,10 +1908,14 @@ function pageHtml() {
       document.getElementById("frames").textContent = s.frames + " frames";
       document.getElementById("keys").textContent = (s.keyEvents || 0) + " keys";
       updateStats(s);
-      if (s.videoSettings && !videoSettingsDirty) {
-        if (typeof s.videoSettings.hardwareCompression === "boolean") document.getElementById("hardwareCompression").checked = s.videoSettings.hardwareCompression;
-        document.getElementById("force8bpp").checked = !!s.videoSettings.force8bpp;
-        document.getElementById("bseMode").value = String(s.videoSettings.bseMode || 0);
+      if (s.videoSettings) {
+        const hw = document.getElementById("hardwareCompression");
+        if (!dirtyVideoSettings.has("hardwareCompression")) {
+          hw.indeterminate = typeof s.videoSettings.hardwareCompression !== "boolean";
+          if (typeof s.videoSettings.hardwareCompression === "boolean") hw.checked = s.videoSettings.hardwareCompression;
+        }
+        if (!dirtyVideoSettings.has("force8bpp")) document.getElementById("force8bpp").checked = !!s.videoSettings.force8bpp;
+        if (!dirtyVideoSettings.has("bseMode")) document.getElementById("bseMode").value = String(s.videoSettings.bseMode || 0);
       }
       const power = document.getElementById("power");
       if (s.powerControlEnabled === false) power.textContent = "Power: unavailable";
@@ -1890,9 +1950,9 @@ function pageHtml() {
     document.getElementById("probeHardwareCompression").onclick = probeHardwareCompression;
     document.getElementById("probeBse3").onclick = () => probeBseMode(1);
     document.getElementById("probeBse8").onclick = () => probeBseMode(2);
-    document.getElementById("hardwareCompression").onchange = () => { videoSettingsDirty = true; };
-    document.getElementById("force8bpp").onchange = () => { videoSettingsDirty = true; };
-    document.getElementById("bseMode").onchange = () => { videoSettingsDirty = true; };
+    document.getElementById("hardwareCompression").onchange = () => { document.getElementById("hardwareCompression").indeterminate = false; dirtyVideoSettings.add("hardwareCompression"); };
+    document.getElementById("force8bpp").onchange = () => { dirtyVideoSettings.add("force8bpp"); };
+    document.getElementById("bseMode").onchange = () => { dirtyVideoSettings.add("bseMode"); };
     document.addEventListener("click", e => {
       const b = e.target.closest("button");
       if (!b) return;

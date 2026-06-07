@@ -13,6 +13,7 @@ This project reverse-engineers enough of the Mahogany stream to display the remo
 - Text mode rendering for BIOS/bootloader screens
 - Update rectangle overlay, stats, and replay recording
 - Video options/probes for hardware compression, force-8bpp, and BSE low-bandwidth modes
+- Observed stream mode inference for effective HLC/raw/BSE/SSP/bpp state
 - Diagnostic pcap stream extraction/decoder helpers
 
 ## Requirements
@@ -91,6 +92,8 @@ See [docs/protocol.md](docs/protocol.md) for the current reverse-engineered Maho
 Do not commit real `avr.jnlp` files, cookies, packet captures, or logs from your environment. They can contain session tokens, network details, or credentials. The `.gitignore` excludes the common local artifacts.
 
 Power actions are sent directly to the iRMC. The UI asks for confirmation before sending them, but treat them as real out-of-band server controls.
+
+The iRMC S3 protocol path used here has not exposed a direct "current video settings" query yet. The debug panel therefore distinguishes requested settings from observed/effective stream state inferred from received frame commands and encodings.
 
 ## Status
 
