@@ -48,7 +48,7 @@ After receiving the server handshake command `0xc8`, the client sends:
 | --- | --- | --- | --- |
 | `0xdd` | Client handshake/auth block | structured auth block | Contains username and JNLP `httpdata`; password field is blank in observed applet flow. |
 | `0xf7` | `InformBSEMode` | `u32le mode` | `0` none, `1` 3bpp BSE, `2` 8bpp BSE. |
-| `0xf3` | `InformHLevelCompression` | `u8 enabled` | Java UI calls this "Hardware Compression". On tested firmware it appears enabled by default; switching it off after it has been on can increase bandwidth demand. |
+| `0xf3` | `InformHLevelCompression` | `u8 enabled` | Java UI calls this "Hardware Compression". On tested firmware it appears enabled by default. `1` selects HLC enhance frames; `0` selects raw enhance frames. |
 | `0xf6` | `InformForce8BPPMode` | `u8 enabled` | Java exposes a reduce-bandwidth/force-8bpp concept; behavior varies. |
 | `0xd3` | `RequestPrimaryControl` | `u8 0` | Requests primary console control. |
 | `0xf2` | `Invalidate` | region list | Requests repaint. This project sends a large full-screen region on startup. |
@@ -103,9 +103,16 @@ The viewer uses `0xf2` to request a fresh repaint after startup or video option 
 
 Payload: `u8 enabled`.
 
-Applet/resource naming maps this to "Hardware Compression". On tested firmware the stream appears to start in the same state as `enabled=1`. Sending `enabled=1` keeps the stream in that state, while switching it off after it has been on can increase bandwidth demand.
+Applet/resource naming maps this to "Hardware Compression". On tested firmware the stream appears to start in the same state as `enabled=1`.
 
-Treat this as an encoder-path selector, not a guaranteed bandwidth reducer. Compare bitrate/fps before and after toggles in the viewer stats before assuming it helped.
+Observed mapping:
+
+| Value | Effective stream | Observed `0xe3` blt type | Notes |
+| --- | --- | --- | --- |
+| `1` | HLC compressed enhance | `-32270` / `498` | Default on tested firmware. Small cursor/update frames can be under 1 KiB. |
+| `0` | raw enhance | `-32272` / `496` | Greatly increases bandwidth; full-screen repaint frames around 1-2 MiB were observed at 1024x768x32. |
+
+Treat this as an encoder-path selector, not a generic hardware feature toggle. The viewer labels it as HLC compression and asks for confirmation before switching to raw enhance from the browser UI.
 
 ### `0xf6` Inform Force 8bpp
 
@@ -259,6 +266,13 @@ Known enhance blt types from the Java applet:
 
 The raw enhance path copies pixel bytes for active tiles.
 
+This path is selected by `0xf3 00` on tested firmware. It can emit very large full-screen updates. Example observed frame lengths after switching from HLC to raw enhance at 1024x768x32:
+
+```text
+0xe3 -32272 raw enhance, len 2097685
+0xe3 496 raw enhance, len 1049109
+```
+
 For `bpp > 8`, pixels are observed as BGR byte order:
 
 ```text
@@ -270,6 +284,8 @@ For `bpp <= 8`, each byte is a palette index.
 ### Enhance HLC
 
 HLC uses the same active tile map but compresses color planes with an RLE byte reader.
+
+This path is selected by `0xf3 01` and appears to be the default on tested firmware.
 
 For `bpp > 8`, payload starts with channel sizes:
 
@@ -474,5 +490,6 @@ Still incomplete:
 
 - JNLP files and `httpdata` expire and are sensitive.
 - Packet captures can contain auth/session material.
+- `0xf3 00` is a valid raw-enhance mode switch, but it can produce very large frames and should be used deliberately.
 - 3bpp and 8bpp BSE low-bandwidth modes are implemented, but SSP low-bandwidth frames can still put the stream into formats this viewer does not render yet.
 - If the stream appears frozen, check `pending`, `rx buffered`, and `enhance types` before assuming the iRMC stopped sending data.
